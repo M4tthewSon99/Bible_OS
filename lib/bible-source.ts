@@ -81,15 +81,19 @@ function queued<T>(request: () => Promise<T>): Promise<T> {
   return promise;
 }
 
-async function getJSON<T>(url: string): Promise<T> {
+async function getJSON<T>(url: string, externalSignal?: AbortSignal): Promise<T> {
   return queued(async () => {
+    if (externalSignal?.aborted) throw new DOMException("Search cancelled", "AbortError");
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const controller = new AbortController();
+      const abort = () => controller.abort();
+      externalSignal?.addEventListener("abort", abort, { once: true });
       const timer = window.setTimeout(() => controller.abort(), 14_000);
 
       try {
         const response = await fetch(url, { signal: controller.signal });
         window.clearTimeout(timer);
+        externalSignal?.removeEventListener("abort", abort);
         if (response.status === 429) {
           await new Promise((resolve) => window.setTimeout(resolve, 1_400));
           continue;
@@ -98,6 +102,8 @@ async function getJSON<T>(url: string): Promise<T> {
         return (await response.json()) as T;
       } catch (error) {
         window.clearTimeout(timer);
+        externalSignal?.removeEventListener("abort", abort);
+        if (externalSignal?.aborted) throw error;
         if (attempt === 1) throw error;
         await new Promise((resolve) => window.setTimeout(resolve, 700));
       }
@@ -509,17 +515,36 @@ function snippet(value: string, maximum: number): string {
   return value.length > maximum ? `${value.slice(0, maximum).trim()}…` : value;
 }
 
+function normalizedEnglishTerms(query: string): string[] {
+  return query
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[“”‘’']/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function englishMatches(value: string, query: string): boolean {
+  const terms = normalizedEnglishTerms(query);
+  if (!terms.length) return false;
+  const haystack = value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[“”‘’']/g, "")
+    .replace(/[^a-z0-9]+/g, " ");
+  return terms.every((term) => haystack.includes(term));
+}
+
 function searchCache(query: string): SearchResult[] {
-  const isChinese = CJK.test(query);
-  const needle = isChinese ? t2s(query).replace(/\s+/g, "") : query.toLowerCase();
   const output: SearchResult[] = [];
 
   for (const chapter of chapterCache.values()) {
     for (const verse of chapter.numbers) {
       const en = chapter.enText[verse] || "";
       const zh = chapter.zhText[verse] || "";
-      const haystack = isChinese ? zh : en.toLowerCase();
-      if (haystack && haystack.includes(needle)) {
+      if (en && englishMatches(en, query)) {
         output.push({
           bookId: chapter.bookId,
           chapter: chapter.chapter,
@@ -537,6 +562,11 @@ function searchCache(query: string): SearchResult[] {
   return output;
 }
 
+export function localKeywordSearch(query: string, limit = 8): SearchResult[] {
+  if (CJK.test(query)) return [];
+  return searchCache(query.trim()).slice(0, limit);
+}
+
 interface RemoteSearchResult {
   book_id: string;
   chapter: number;
@@ -547,46 +577,63 @@ interface RemoteSearchResult {
 export async function keywordSearch(
   query: string,
   limit = 8,
-): Promise<{ results: SearchResult[]; scope: "none" | "cache" | "empty" | "canon" }> {
+  signal?: AbortSignal,
+): Promise<{ results: SearchResult[]; scope: "none" | "cache" | "empty" | "canon" | "partial" | "error" }> {
   const normalized = query.trim();
   if (normalized.length < 2) return { results: [], scope: "none" };
 
   const local = searchCache(normalized);
-  if (CJK.test(normalized)) return { results: local.slice(0, limit), scope: "cache" };
+  if (CJK.test(normalized)) return { results: [], scope: "none" };
 
   let remote: RemoteSearchResult[] = [];
+  let remoteFailed = false;
   try {
     const data = await getJSON<{ results?: RemoteSearchResult[] }>(
       `${SEARCH_API}?q=${encodeURIComponent(normalized)}&translation=asv&limit=24`,
+      signal,
     );
-    remote = (data.results || []).filter((result) => BY_ID[result.book_id]).slice(0, limit);
-  } catch {
-    // The locally loaded reading window remains searchable when the remote index is unavailable.
+    remote = (data.results || []).filter((result) => BY_ID[result.book_id]);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    remoteFailed = true;
   }
 
   if (!remote.length) {
-    return { results: local.slice(0, limit), scope: local.length ? "cache" : "empty" };
+    return {
+      results: local.slice(0, limit),
+      scope: local.length
+        ? remoteFailed ? "partial" : "cache"
+        : remoteFailed ? "error" : "empty",
+    };
   }
 
-  const keys = [...new Set(remote.map((result) => chapterKey(result.book_id, result.chapter)))].slice(0, 6);
+  const keys = [...new Set(remote.map((result) => chapterKey(result.book_id, result.chapter)))].slice(0, 10);
   await Promise.all(keys.map((key) => {
     const [bookId, chapter] = key.split("/");
     return getChapter(bookId, Number(chapter)).catch(() => null);
   }));
 
+  const merged = new Map<string, SearchResult>();
+  local.forEach((result) => merged.set(`${result.bookId}/${result.chapter}/${result.verse}`, result));
+  remote.forEach((result) => {
+    const chapter = chapterCache.get(chapterKey(result.book_id, result.chapter));
+    const en = chapter ? chapter.enText[result.verse] || "" : cleanEnglish(result.text);
+    if (!englishMatches(en, normalized)) return;
+    const key = `${result.book_id}/${result.chapter}/${result.verse}`;
+    if (merged.has(key)) return;
+    merged.set(key, {
+      bookId: result.book_id,
+      chapter: result.chapter,
+      verse: result.verse,
+      ref: refLabel(result.book_id, result.chapter, result.verse),
+      refZh: refLabelZh(result.book_id, result.chapter, result.verse),
+      en: snippet(en, 150),
+      zh: snippet(chapter ? chapter.zhText[result.verse] || "" : "", 60),
+    });
+  });
+
   return {
     scope: "canon",
-    results: remote.map((result) => {
-      const chapter = chapterCache.get(chapterKey(result.book_id, result.chapter));
-      return {
-        bookId: result.book_id,
-        chapter: result.chapter,
-        verse: result.verse,
-        ref: refLabel(result.book_id, result.chapter, result.verse),
-        refZh: refLabelZh(result.book_id, result.chapter, result.verse),
-        en: snippet(chapter ? chapter.enText[result.verse] : cleanEnglish(result.text), 150),
-        zh: snippet(chapter ? chapter.zhText[result.verse] : "", 60),
-      };
-    }),
+    results: [...merged.values()].slice(0, limit),
   };
 }

@@ -36,6 +36,7 @@ const SPACING = [
   { label: "Roomy", value: 1.95 },
 ];
 const MAX_LOADED = 8;
+const HAS_CJK = /[\u3400-\u9fff]/;
 
 interface LoadedChapter {
   key: string;
@@ -99,7 +100,10 @@ interface State {
   resultsOpen: boolean;
   resultsNote: string;
   searching: boolean;
+  searchStale: boolean;
+  activeSearchIndex: number;
   referenceHint: ReferenceHint | null;
+  landingVerseKey: string | null;
   selectionToolbar: SelectionToolbar | null;
   toast: Toast | null;
   loadingMore: boolean;
@@ -167,7 +171,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     resultsOpen: false,
     resultsNote: "",
     searching: false,
+    searchStale: false,
+    activeSearchIndex: 0,
     referenceHint: null,
+    landingVerseKey: null,
     selectionToolbar: null,
     toast: null,
     loadingMore: false,
@@ -177,6 +184,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   private readonly fileRef = createRef<HTMLInputElement>();
   private readonly spotlightInputRef = createRef<HTMLInputElement>();
+  private readonly searchTriggerRef = createRef<HTMLButtonElement>();
+  private readonly spotlightRef = createRef<HTMLDivElement>();
   private readonly navListRef = createRef<HTMLDivElement>();
   private readonly navBookRef = createRef<HTMLDivElement>();
   private anchor: number | null = null;
@@ -190,7 +199,15 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private saveTimer?: ReturnType<typeof setTimeout>;
   private scrollTick: number | null = null;
   private searchTimer?: ReturnType<typeof setTimeout>;
+  private searchIndicatorTimer?: ReturnType<typeof setTimeout>;
+  private landingTimer?: ReturnType<typeof setTimeout>;
+  private searchAbort?: AbortController;
   private searchToken?: symbol;
+  private searchOpener: HTMLElement | null = null;
+  private readonly searchResponses = new Map<
+    string,
+    Awaited<ReturnType<typeof scripture.keywordSearch>>
+  >();
   private selectionTimer?: ReturnType<typeof setTimeout>;
   private toastTimer?: ReturnType<typeof setTimeout>;
   private wentDeep = false;
@@ -239,9 +256,13 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       this.positionTimer,
       this.saveTimer,
       this.searchTimer,
+      this.searchIndicatorTimer,
+      this.landingTimer,
       this.selectionTimer,
       this.toastTimer,
     ].forEach((timer) => timer && clearTimeout(timer));
+    this.searchAbort?.abort();
+    document.body.classList.remove("search-open");
   }
 
   componentDidUpdate(): void {
@@ -269,6 +290,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       } else if (Date.now() - target.at > 4_000) {
         this.pendingScroll = null;
       }
+    }
+
+    if (this.state.spotlightOpen) {
+      document.getElementById(this.activeSearchOptionId())?.scrollIntoView({ block: "nearest" });
     }
   }
 
@@ -344,6 +369,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       atCanonStart: false,
       atCanonEnd: false,
       activeId: null,
+      landingVerseKey: options.verse ? `${key}:${options.verse}` : null,
     });
     this.setUrl(bookId, chapter);
     window.scrollTo(0, 0);
@@ -356,6 +382,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         : null;
     if (selector) this.pendingScroll = { selector, at: Date.now() };
     else window.scrollTo(0, 0);
+    if (options.verse) {
+      if (this.landingTimer) clearTimeout(this.landingTimer);
+      this.landingTimer = setTimeout(() => this.setState({ landingVerseKey: null }), 4_200);
+    }
   };
 
   private fetchInto = async (key: string, bookId: string, chapter: number): Promise<void> => {
@@ -724,7 +754,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const typing = target && (
       target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable
     );
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
       this.openSpotlight();
       return;
@@ -762,23 +792,97 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   };
 
   private openSpotlight = (): void => {
+    if (this.state.spotlightOpen) {
+      this.spotlightInputRef.current?.focus();
+      return;
+    }
+    this.searchOpener = document.activeElement as HTMLElement | null;
+    document.body.classList.add("search-open");
     this.setState({ spotlightOpen: true });
     setTimeout(() => this.spotlightInputRef.current?.focus(), 30);
   };
 
   private closeSpotlight = (): void => {
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    if (this.searchIndicatorTimer) clearTimeout(this.searchIndicatorTimer);
+    this.searchAbort?.abort();
+    this.searchToken = undefined;
+    document.body.classList.remove("search-open");
+    const opener = this.searchOpener || this.searchTriggerRef.current;
     this.setState({
       spotlightOpen: false,
       resultsOpen: false,
       query: "",
       results: [],
       resultsNote: "",
+      searching: false,
+      searchStale: false,
+      activeSearchIndex: 0,
       referenceHint: null,
     });
+    setTimeout(() => opener?.focus(), 0);
   };
 
-  private runSearch(query: string): void {
+  private searchCacheKey(query: string): string {
+    return `${this.state.sourceId}:${query.trim().toLowerCase().replace(/\s+/g, " ")}`;
+  }
+
+  private rememberSearchResponse(
+    key: string,
+    output: Awaited<ReturnType<typeof scripture.keywordSearch>>,
+  ): void {
+    this.searchResponses.delete(key);
+    this.searchResponses.set(key, output);
+    if (this.searchResponses.size > 20) {
+      const oldest = this.searchResponses.keys().next().value;
+      if (oldest) this.searchResponses.delete(oldest);
+    }
+  }
+
+  private applySearchOutput(output: Awaited<ReturnType<typeof scripture.keywordSearch>>): void {
+    const results = output.results.map((result) => ({
+      ...result,
+      go: () => this.pickResult(result),
+    }));
+    const resultsNote = output.scope === "cache"
+      ? "Showing matches from chapters opened in this session."
+      : output.scope === "partial"
+        ? "Full search is unavailable. Results currently cover chapters opened in this session."
+      : output.scope === "error"
+        ? "Search couldn’t reach the full Bible index."
+        : results.length
+          ? ""
+          : "No exact matches. Try a shorter phrase or a reference like “John 3:16”.";
+    this.setState({
+      searching: false,
+      searchStale: false,
+      results,
+      resultsNote,
+      resultsOpen: true,
+      activeSearchIndex: 0,
+    });
+  }
+
+  private runSearch(query: string, bypassCache = false): void {
     if (this.searchTimer) clearTimeout(this.searchTimer);
+    if (this.searchIndicatorTimer) clearTimeout(this.searchIndicatorTimer);
+    this.searchAbort?.abort();
+    this.searchToken = undefined;
+
+    const trimmed = query.trim();
+    if (HAS_CJK.test(trimmed)) {
+      this.setState({
+        referenceHint: null,
+        results: [],
+        resultsOpen: true,
+        resultsNote: "Search accepts English references and keywords.",
+        searching: false,
+        searchStale: false,
+        activeSearchIndex: 0,
+      });
+      return;
+    }
+
     const reference = scripture.parseReference(query);
     const referenceHint = reference ? {
       ...reference,
@@ -787,42 +891,144 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     } : null;
     this.setState({
       referenceHint,
-      resultsOpen: Boolean(referenceHint || query.trim().length >= 2),
+      resultsOpen: Boolean(referenceHint || trimmed.length >= 2),
+      activeSearchIndex: 0,
     });
-    if (referenceHint || query.trim().length < 2) {
-      this.setState({ results: [], resultsNote: "", searching: false });
+    if (referenceHint || trimmed.length < 2) {
+      this.setState({
+        results: [],
+        resultsNote: "",
+        searching: false,
+        searchStale: false,
+      });
       return;
     }
 
-    this.setState({ searching: true });
+    const cacheKey = this.searchCacheKey(trimmed);
+    const cached = bypassCache ? null : this.searchResponses.get(cacheKey);
+    if (cached) {
+      this.applySearchOutput(cached);
+      return;
+    }
+
+    const local = scripture.localKeywordSearch(trimmed, 8);
+    this.setState((state) => ({
+      results: local.length
+        ? local.map((result) => ({ ...result, go: () => this.pickResult(result) }))
+        : state.results,
+      resultsNote: "",
+      searching: false,
+      searchStale: !local.length && state.results.length > 0,
+      resultsOpen: true,
+      activeSearchIndex: 0,
+    }));
+
     this.searchTimer = setTimeout(async () => {
       const token = Symbol("search");
       this.searchToken = token;
-      let output: Awaited<ReturnType<typeof scripture.keywordSearch>> = { results: [], scope: "empty" };
+      const controller = new AbortController();
+      this.searchAbort = controller;
+      this.searchIndicatorTimer = setTimeout(() => {
+        if (this.searchToken === token) this.setState({ searching: true });
+      }, 120);
       try {
-        output = await scripture.keywordSearch(query, 8);
-      } catch {
-        // The no-results state explains how to continue.
+        const output = await scripture.keywordSearch(trimmed, 8, controller.signal);
+        if (this.searchToken !== token) return;
+        this.rememberSearchResponse(cacheKey, output);
+        this.applySearchOutput(output);
+      } catch (error) {
+        if (controller.signal.aborted || this.searchToken !== token) return;
+        this.applySearchOutput({ results: local, scope: local.length ? "cache" : "error" });
+      } finally {
+        if (this.searchIndicatorTimer) clearTimeout(this.searchIndicatorTimer);
       }
-      if (this.searchToken !== token) return;
-      this.setState({
-        searching: false,
-        results: output.results.map((result) => ({
-          ...result,
-          go: () => this.pickResult(result),
-        })),
-        resultsNote: output.results.length
-          ? output.scope === "cache"
-            ? "Chinese keyword search covers the chapters you have opened."
-            : ""
-          : "No matches. Try a reference like “John 3:16” or “约翰福音 3:16”.",
-      });
-    }, 420);
+    }, 180);
   }
+
+  private retrySearch = (): void => {
+    if (this.state.query.trim()) this.runSearch(this.state.query, true);
+  };
+
+  private clearSearch = (): void => {
+    this.setState({ query: "" });
+    this.runSearch("");
+    setTimeout(() => this.spotlightInputRef.current?.focus(), 0);
+  };
+
+  private searchOptionCount(): number {
+    return (this.state.referenceHint ? 1 : 0) + this.state.results.length;
+  }
+
+  private activeSearchOptionId(): string {
+    return `search-option-${this.state.activeSearchIndex}`;
+  }
+
+  private onSearchInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+
+      const reference = scripture.parseReference(this.state.query);
+      if (reference) {
+        this.closeSpotlight();
+        void this.openAt(reference.bookId, reference.chapter, { verse: reference.verse });
+        return;
+      }
+
+      const result = this.state.results[this.state.activeSearchIndex];
+      result?.go();
+      return;
+    }
+
+    const count = this.searchOptionCount();
+    if (!count) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      let activeSearchIndex = this.state.activeSearchIndex;
+      if (event.key === "ArrowDown") activeSearchIndex = (activeSearchIndex + 1) % count;
+      if (event.key === "ArrowUp") activeSearchIndex = (activeSearchIndex - 1 + count) % count;
+      if (event.key === "Home") activeSearchIndex = 0;
+      if (event.key === "End") activeSearchIndex = count - 1;
+      this.setState({ activeSearchIndex });
+    }
+  };
+
+  private onSpotlightKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== "Tab") return;
+    const focusables = this.spotlightRef.current?.querySelectorAll<HTMLElement>(
+      'input, button:not([tabindex="-1"]):not([disabled])',
+    );
+    if (!focusables?.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   private pickResult(result: SearchResult): void {
     this.closeSpotlight();
     void this.openAt(result.bookId, result.chapter, { verse: result.verse });
+  }
+
+  private highlightSearchText(value: string): ReactNode {
+    const terms = this.state.query
+      .replace(/[“”‘’'".,;:!?()[\]{}]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter((term) => term.length > 1)
+      .sort((left, right) => right.length - left.length);
+    if (!terms.length) return value;
+    const escaped = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const pattern = new RegExp(`(${escaped.join("|")})`, "gi");
+    return value.split(pattern).map((part, index) =>
+      terms.some((term) => term.toLowerCase() === part.toLowerCase())
+        ? <mark key={`${part}-${index}`}>{part}</mark>
+        : part,
+    );
   }
 
   private markdown(source: string): string {
@@ -945,6 +1151,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   };
 
   private reloadCurrent(message: string): void {
+    this.searchResponses.clear();
     this.flash(message);
     const { current } = this.state;
     if (current) void this.openAt(current.bookId, current.chapter);
@@ -1046,7 +1253,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       this.closeSpotlight();
       void this.openAt(reference.bookId, reference.chapter, { verse: reference.verse });
     } else {
-      this.state.results[0]?.go();
+      const index = Math.min(this.state.activeSearchIndex, Math.max(0, this.state.results.length - 1));
+      this.state.results[index]?.go();
     }
   };
 
@@ -1168,6 +1376,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     sourceId: EnglishSourceId,
   ): ReactNode {
     const {
+      activeSearchIndex,
       annotations,
       keyDraft,
       keyField,
@@ -1181,6 +1390,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       results,
       resultsNote,
       resultsOpen,
+      searchStale,
       searching,
       spotlightOpen,
     } = this.state;
@@ -1230,6 +1440,22 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                 ))}
               </div>
             )}
+
+            <button
+              aria-haspopup="dialog"
+              aria-label="Search passages and keywords"
+              className="search-trigger"
+              onClick={this.openSpotlight}
+              ref={this.searchTriggerRef}
+              type="button"
+            >
+              <svg aria-hidden="true" fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" viewBox="0 0 24 24" width="14">
+                <circle cx="11" cy="11" r="6.5" />
+                <path d="m16 16 4 4" />
+              </svg>
+              <span>Search</span>
+              <kbd>⌘ K</kbd>
+            </button>
 
             <div className="menu-wrap">
               <button
@@ -1411,56 +1637,152 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             aria-modal="true"
             className="spotlight"
             onClick={(event) => event.stopPropagation()}
+            onKeyDown={this.onSpotlightKeyDown}
+            ref={this.spotlightRef}
             role="dialog"
           >
-            <form className="spotlight-form" onSubmit={this.handleSearchSubmit} role="search">
-              <span aria-hidden="true" className="search-icon" />
-              <input
-                aria-label="Search a passage reference or keyword"
-                onChange={(event) => {
-                  this.setState({ query: event.target.value });
-                  this.runSearch(event.target.value);
-                }}
-                placeholder="Search a passage or keyword — “John 3:16”, “约翰福音 3:16”"
-                ref={this.spotlightInputRef}
-                type="search"
-                value={query}
-              />
-              {searching && <span className="searching">searching</span>}
-            </form>
+            <div className="spotlight-head">
+              <form className="spotlight-form" onSubmit={this.handleSearchSubmit} role="search">
+                <span aria-hidden="true" className="search-icon" />
+                <input
+                  aria-activedescendant={this.searchOptionCount() ? this.activeSearchOptionId() : undefined}
+                  aria-autocomplete="list"
+                  aria-controls="search-results"
+                  aria-expanded={resultsOpen}
+                  aria-label="Search a passage reference or keyword"
+                  onChange={(event) => {
+                    this.setState({ query: event.target.value });
+                    this.runSearch(event.target.value);
+                  }}
+                  onKeyDown={this.onSearchInputKeyDown}
+                  placeholder="Search a passage or keyword"
+                  ref={this.spotlightInputRef}
+                  role="combobox"
+                  spellCheck={false}
+                  type="search"
+                  value={query}
+                />
+                {query && (
+                  <button aria-label="Clear search" className="search-clear" onClick={this.clearSearch} type="button">
+                    ×
+                  </button>
+                )}
+              </form>
+              <button aria-label="Close search" className="search-close" onClick={this.closeSpotlight} type="button">
+                <span aria-hidden="true">Esc</span>
+                <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" viewBox="0 0 24 24" width="16">
+                  <path d="M6 6l12 12M18 6 6 18" />
+                </svg>
+              </button>
+            </div>
+
+            <p aria-live="polite" className="sr-only" role="status">
+              {searching
+                ? "Searching the Bible"
+                : referenceHint
+                  ? `Reference ready: ${referenceHint.label}`
+                  : results.length
+                    ? `${results.length} search results`
+                    : resultsNote}
+            </p>
+
+            {!query && (
+              <div className="search-welcome">
+                <p className="search-welcome-title">Find a passage or remembered phrase.</p>
+                <p className="search-welcome-copy">Search in English. Results include the parallel Chinese text.</p>
+                <div aria-label="Search examples" className="search-examples">
+                  {["John 3:16", "living water"].map((example) => (
+                    <button
+                      key={example}
+                      onClick={() => {
+                        this.setState({ query: example });
+                        this.runSearch(example);
+                      }}
+                      type="button"
+                    >
+                      <span>{example.includes(":") ? "Passage" : "Keyword"}</span>
+                      {example}
+                    </button>
+                  ))}
+                </div>
+                <p className="search-shortcuts"><kbd>↑</kbd><kbd>↓</kbd> to move <span /> <kbd>↵</kbd> to open</p>
+              </div>
+            )}
+
+            {searching && <span aria-hidden="true" className="search-progress" />}
 
             {resultsOpen && (
-              <div aria-label="Search results" className="spotlight-results" role="listbox">
+              <div
+                aria-busy={searching}
+                aria-label="Search results"
+                className={`spotlight-results${searchStale ? " stale" : ""}`}
+                id="search-results"
+                role="listbox"
+              >
                 {referenceHint && (
                   <button
-                    className="reference-result"
+                    aria-selected={activeSearchIndex === 0}
+                    className={`reference-result${activeSearchIndex === 0 ? " active" : ""}`}
+                    id="search-option-0"
                     onClick={() => {
                       this.closeSpotlight();
                       void this.openAt(referenceHint.bookId, referenceHint.chapter, { verse: referenceHint.verse });
                     }}
+                    onMouseEnter={() => this.setState({ activeSearchIndex: 0 })}
+                    role="option"
+                    tabIndex={-1}
                     type="button"
                   >
-                    <span className="go-to">Go to</span>
-                    <span className="result-ref-large">{referenceHint.label}</span>
-                    <span className="result-ref-zh">{referenceHint.labelZh}</span>
+                    <span className="reference-arrow" aria-hidden="true">→</span>
+                    <span>
+                      <span className="go-to">Open passage</span>
+                      <span className="result-ref-large">{referenceHint.label}</span>
+                      <span className="result-ref-zh">{referenceHint.labelZh}</span>
+                    </span>
+                    <kbd aria-hidden="true">↵</kbd>
                   </button>
                 )}
-                {results.map((result) => (
-                  <button className="search-result" key={`${result.ref}-${result.verse}`} onClick={result.go} type="button">
-                    <span className="result-meta">
-                      <span>{result.ref}</span>
-                      <span lang="zh">{result.refZh}</span>
-                    </span>
-                    <span className="result-english">{result.en}</span>
-                    <span className="result-chinese" lang="zh">{result.zh}</span>
-                  </button>
-                ))}
-                {resultsNote && <p className="results-note">{resultsNote}</p>}
+                {results.map((result, index) => {
+                  const optionIndex = index + (referenceHint ? 1 : 0);
+                  return (
+                    <button
+                      aria-selected={activeSearchIndex === optionIndex}
+                      className={`search-result${activeSearchIndex === optionIndex ? " active" : ""}`}
+                      id={`search-option-${optionIndex}`}
+                      key={`${result.ref}-${result.verse}`}
+                      onClick={result.go}
+                      onMouseEnter={() => this.setState({ activeSearchIndex: optionIndex })}
+                      role="option"
+                      tabIndex={-1}
+                      type="button"
+                    >
+                      <span className="result-meta">
+                        <span>{result.ref}</span>
+                        <span lang="zh">{result.refZh}</span>
+                      </span>
+                      <span className="result-english">{this.highlightSearchText(result.en)}</span>
+                      <span className="result-chinese" lang="zh">{result.zh}</span>
+                    </button>
+                  );
+                })}
+                {searching && !results.length && (
+                  <div aria-hidden="true" className="search-loading-state">
+                    <span /><span /><span />
+                  </div>
+                )}
+                {resultsNote && (
+                  <div className="results-note">
+                    <p>{resultsNote}</p>
+                    {resultsNote.startsWith("Search couldn’t") && (
+                      <button onClick={this.retrySearch} type="button">Retry</button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
-        )}
+      )}
       </>
     );
   }
@@ -1500,7 +1822,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       }
 
       return (
-        <span className="segment-wrap" key={`${language}-${segment.off}-${index}`}>
+        <span
+          className={`segment-wrap${this.state.landingVerseKey === `${block.key}:${segment.vnum}` ? " search-landing" : ""}`}
+          key={`${language}-${segment.off}-${index}`}
+        >
           {segment.showNum && <span aria-hidden="true" className="verse-number">{segment.vnum}</span>}
           {text}
           {segment.dot && segment.annotationId && (
