@@ -81,6 +81,11 @@ a:hover {
   to { opacity: 1; transform: none; }
 }
 
+@keyframes rise-centered {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to { opacity: 1; transform: translateX(-50%); }
+}
+
 .app-shell {
   min-height: 100vh;
 }
@@ -1097,7 +1102,7 @@ a:hover {
   background: #26241f;
   box-shadow: 0 12px 28px -14px rgb(0 0 0 / 55%);
   transform: translateX(-50%);
-  animation: rise 0.12s ease-out;
+  animation: rise-centered 0.12s ease-out;
 }
 
 .selection-toolbar button {
@@ -1149,7 +1154,7 @@ a:hover {
   color: #f6f5f3;
   font-size: 12.5px;
   transform: translateX(-50%);
-  animation: rise 0.14s ease-out;
+  animation: rise-centered 0.14s ease-out;
 }
 
 .toast button {
