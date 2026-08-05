@@ -1034,6 +1034,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   private renderHeader(
     currentLabel: string,
+    currentLabelZh: string,
     sourceId: EnglishSourceId,
   ): ReactNode {
     const {
@@ -1079,9 +1080,12 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             >
               Bible OS
             </a>
-            <span aria-hidden="true" className="brand-divider" />
-            <span aria-live="polite" className="current-label">{currentLabel}</span>
           </div>
+
+          <span aria-live="polite" className="current-label">
+            <span className="current-label-en">{currentLabel}</span>
+            <span className="current-label-zh" lang="zh">{currentLabelZh}</span>
+          </span>
 
           <div className="header-actions">
             {narrow && (
@@ -1589,10 +1593,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const usingEsv = sourceId !== "web" && esvStatus.ok;
     const englishLabel = usingEsv ? scripture.englishSource() : "WEB";
     const currentLabel = current ? scripture.refLabel(current.bookId, current.chapter) : "Loading";
+    const currentLabelZh = current ? scripture.refLabelZh(current.bookId, current.chapter) : "载入中";
 
     return (
       <div className="app-shell">
-        {this.renderHeader(currentLabel, sourceId)}
+        {this.renderHeader(currentLabel, currentLabelZh, sourceId)}
         <div className="reader-with-notes">
           <main className="reader">
             <div className="reader-inner">

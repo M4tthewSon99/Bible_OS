@@ -141,21 +141,35 @@ a:hover {
   text-decoration: none;
 }
 
-.brand-divider {
-  width: 1px;
-  height: 16px;
-  flex: none;
-  background: #e3e1dd;
+.current-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  max-width: 40vw;
+  align-items: baseline;
+  gap: 9px;
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  white-space: nowrap;
 }
 
-.current-label {
-  max-width: 150px;
-  min-width: 0;
+.current-label-en {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+}
+
+.current-label-zh {
   overflow: hidden;
   color: var(--muted);
-  font-size: 12.5px;
+  font-family: "Noto Serif SC", serif;
+  font-size: 13px;
+  font-weight: 600;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .spotlight-backdrop {
@@ -1202,10 +1216,6 @@ a:hover {
 
 @media (max-width: 1099px) {
   .current-label {
-    display: none;
-  }
-
-  .brand-divider {
     display: none;
   }
 
