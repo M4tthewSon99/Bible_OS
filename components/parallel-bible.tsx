@@ -89,7 +89,8 @@ interface State {
   saveState: string;
   menu: "settings" | "chapters" | null;
   navTestament: Testament;
-  navBook: string | null;
+  navOpenBooks: string[];
+  sourceId: EnglishSourceId;
   keyField: boolean;
   keyDraft: string;
   query: string;
@@ -156,7 +157,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     saveState: "",
     menu: null,
     navTestament: "new",
-    navBook: null,
+    navOpenBooks: [],
+    sourceId: "web",
     keyField: false,
     keyDraft: "",
     query: "",
@@ -201,7 +203,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     document.addEventListener("selectionchange", this.onSelectionChange);
     document.addEventListener("mousedown", this.onDocumentMouseDown, true);
 
-    this.setState({ narrow: window.innerWidth < 1100 });
+    this.setState({ narrow: window.innerWidth < 1100, sourceId: scripture.englishSourceId() });
     this.applyCssVariables();
 
     void scripture.ready().then(() => {
@@ -1033,7 +1035,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       return;
     }
     scripture.setEnglishSource(source);
-    this.setState({ menu: null });
+    this.setState({ menu: null, sourceId: source });
     this.reloadCurrent(source === "web" ? "Reading the public-domain English text." : "Reading the ESV.");
   }
 
@@ -1059,18 +1061,26 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     this.setState({
       menu: "chapters",
       navTestament: scripture.bookTestament(bookId),
-      navBook: bookId,
+      navOpenBooks: [bookId],
     });
   };
 
   private pickChapter = (bookId: string, chapter: number): void => {
     this.navScrollPending = false;
-    this.setState({ menu: null, navBook: bookId });
+    this.setState({ menu: null, navOpenBooks: [bookId] });
     void this.openAt(bookId, chapter);
   };
 
+  private toggleNavBook = (bookId: string): void => {
+    this.setState((state) => ({
+      navOpenBooks: state.navOpenBooks.includes(bookId)
+        ? state.navOpenBooks.filter((id) => id !== bookId)
+        : [...state.navOpenBooks, bookId],
+    }));
+  };
+
   private renderChapterPicker(currentLabel: string, currentLabelZh: string): ReactNode {
-    const { current, menu, navBook, navTestament } = this.state;
+    const { current, menu, navOpenBooks, navTestament } = this.state;
     const open = menu === "chapters";
 
     return (
@@ -1108,38 +1118,40 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
             <div className="book-list" ref={this.navListRef}>
               {scripture.booksIn(navTestament).map((book) => {
-                const expanded = navBook === book.id;
+                const expanded = navOpenBooks.includes(book.id);
                 return (
-                  <div className="book-row" key={book.id} ref={expanded ? this.navBookRef : undefined}>
+                  <div className="book-row" key={book.id} ref={book.id === current?.bookId ? this.navBookRef : undefined}>
                     <button
                       aria-expanded={expanded}
                       aria-label={book.name}
                       className={expanded ? "book-name open" : "book-name"}
-                      onClick={() => this.setState({ navBook: expanded ? null : book.id })}
+                      onClick={() => this.toggleNavBook(book.id)}
                       type="button"
                     >
                       <span>{book.name}</span>
                       <span className="book-zh" lang="zh">{book.zh}</span>
                     </button>
-                    {expanded && (
-                      <div className="chapter-grid">
-                        {Array.from({ length: book.chapters }, (_, index) => index + 1).map((chapter) => {
-                          const here = current?.bookId === book.id && current.chapter === chapter;
-                          return (
-                            <button
-                              aria-current={here ? "page" : undefined}
-                              aria-label={`${book.name} ${chapter}`}
-                              className={here ? "chapter-number current" : "chapter-number"}
-                              key={chapter}
-                              onClick={() => this.pickChapter(book.id, chapter)}
-                              type="button"
-                            >
-                              {chapter}
-                            </button>
-                          );
-                        })}
+                    <div className={expanded ? "chapter-grid-wrap open" : "chapter-grid-wrap"} inert={!expanded}>
+                      <div className="chapter-grid-clip">
+                        <div className="chapter-grid">
+                          {Array.from({ length: book.chapters }, (_, index) => index + 1).map((chapter) => {
+                            const here = current?.bookId === book.id && current.chapter === chapter;
+                            return (
+                              <button
+                                aria-current={here ? "page" : undefined}
+                                aria-label={`${book.name} ${chapter}`}
+                                className={here ? "chapter-number current" : "chapter-number"}
+                                key={chapter}
+                                onClick={() => this.pickChapter(book.id, chapter)}
+                                type="button"
+                              >
+                                {chapter}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
-                    )}
+                    </div>
                   </div>
                 );
               })}
@@ -1699,11 +1711,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   }
 
   render(): ReactNode {
-    const { chapters, current, selectionToolbar, toast } = this.state;
+    const { chapters, current, selectionToolbar, sourceId, toast } = this.state;
     const languages = this.languages();
     const showEnglish = languages.includes("en");
     const showChinese = languages.includes("zh");
-    const sourceId = scripture.englishSourceId();
     const esvStatus = scripture.esvState();
     const usingEsv = sourceId !== "web" && esvStatus.ok;
     const englishLabel = usingEsv ? scripture.englishSource() : "WEB";
