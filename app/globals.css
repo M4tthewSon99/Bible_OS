@@ -141,18 +141,34 @@ a:hover {
   text-decoration: none;
 }
 
-.current-label {
+.chapter-picker {
   position: absolute;
   top: 50%;
   left: 50%;
-  display: flex;
   max-width: 40vw;
+  transform: translate(-50%, -50%);
+}
+
+.current-label {
+  display: flex;
+  max-width: 100%;
   align-items: baseline;
   gap: 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
   overflow: hidden;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
+  padding: 5px 9px;
   white-space: nowrap;
+}
+
+.current-label:hover {
+  background: #f4f3f1;
+}
+
+.current-label[aria-expanded="true"] {
+  background: #efeeeb;
 }
 
 .current-label-en {
@@ -170,6 +186,122 @@ a:hover {
   font-size: 13px;
   font-weight: 600;
   text-overflow: ellipsis;
+}
+
+.chapter-caret {
+  flex: none;
+  align-self: center;
+  color: var(--faint);
+  font-size: 9px;
+  transition: transform 0.14s ease-out;
+}
+
+.current-label[aria-expanded="true"] .chapter-caret {
+  transform: rotate(180deg);
+}
+
+.chapter-menu {
+  top: calc(100% + 14px);
+  right: auto;
+  left: 50%;
+  width: 320px;
+  overflow: hidden;
+  padding: 0;
+  transform: translateX(-50%);
+  animation: rise-centered 0.12s ease-out;
+}
+
+.testament-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.testament-tabs button {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 11px 0;
+}
+
+.testament-tabs button:hover {
+  color: var(--ink-soft);
+}
+
+.testament-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--ink);
+  color: var(--ink);
+}
+
+.book-list {
+  position: relative;
+  max-height: min(60vh, 460px);
+  overflow-y: auto;
+  padding: 6px;
+  overscroll-behavior: contain;
+}
+
+.book-name {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #33312d;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 9px;
+  text-align: left;
+}
+
+.book-name:hover {
+  background: var(--paper-warm);
+}
+
+.book-name.open {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.book-zh {
+  flex: none;
+  color: var(--faint);
+  font-family: "Noto Serif SC", serif;
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+.chapter-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  padding: 2px 4px 10px;
+}
+
+.chapter-number {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  padding: 7px 0;
+}
+
+.chapter-number:hover {
+  background: #f1f0ed;
+  color: var(--ink);
+}
+
+.chapter-number.current {
+  background: var(--accent);
+  color: #fff;
 }
 
 .spotlight-backdrop {
@@ -1215,7 +1347,11 @@ a:hover {
 }
 
 @media (max-width: 1099px) {
-  .current-label {
+  .chapter-picker {
+    max-width: 46vw;
+  }
+
+  .current-label-zh {
     display: none;
   }
 
@@ -1228,6 +1364,14 @@ a:hover {
 @media (max-width: 760px) {
   .header-grid {
     padding: 0 16px;
+  }
+
+  .chapter-menu {
+    width: min(320px, calc(100vw - 32px));
+  }
+
+  .book-list {
+    max-height: min(58vh, 400px);
   }
 
   .reader {

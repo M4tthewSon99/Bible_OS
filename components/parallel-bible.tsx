@@ -21,6 +21,7 @@ import type {
   ParagraphBlock,
   Preferences,
   SearchResult,
+  Testament,
 } from "@/lib/types";
 
 const STORAGE = {
@@ -86,7 +87,9 @@ interface State {
   activeId: string | null;
   editorMode: "write" | "preview";
   saveState: string;
-  menu: "settings" | null;
+  menu: "settings" | "chapters" | null;
+  navTestament: Testament;
+  navBook: string | null;
   keyField: boolean;
   keyDraft: string;
   query: string;
@@ -152,6 +155,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     editorMode: "write",
     saveState: "",
     menu: null,
+    navTestament: "new",
+    navBook: null,
     keyField: false,
     keyDraft: "",
     query: "",
@@ -170,8 +175,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   private readonly fileRef = createRef<HTMLInputElement>();
   private readonly spotlightInputRef = createRef<HTMLInputElement>();
+  private readonly navListRef = createRef<HTMLDivElement>();
+  private readonly navBookRef = createRef<HTMLDivElement>();
   private anchor: number | null = null;
   private busy: "next" | "prev" | null = null;
+  private navScrollPending = false;
   private clearSave?: ReturnType<typeof setTimeout>;
   private lastY: number | null = null;
   private pendingScroll: { selector: string; at: number } | null = null;
@@ -236,6 +244,14 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   componentDidUpdate(): void {
     this.applyCssVariables();
+    if (this.navScrollPending) {
+      const list = this.navListRef.current;
+      const book = this.navBookRef.current;
+      if (list && book) {
+        this.navScrollPending = false;
+        list.scrollTop = Math.max(0, book.offsetTop - list.clientHeight / 3);
+      }
+    }
     if (this.anchor !== null) {
       const delta = document.documentElement.scrollHeight - this.anchor;
       this.anchor = null;
@@ -1032,6 +1048,108 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }
   };
 
+  private toggleChapterPicker = (): void => {
+    if (this.state.menu === "chapters") {
+      this.navScrollPending = false;
+      this.setState({ menu: null });
+      return;
+    }
+    const bookId = this.state.current?.bookId || "MAT";
+    this.navScrollPending = true;
+    this.setState({
+      menu: "chapters",
+      navTestament: scripture.bookTestament(bookId),
+      navBook: bookId,
+    });
+  };
+
+  private pickChapter = (bookId: string, chapter: number): void => {
+    this.navScrollPending = false;
+    this.setState({ menu: null, navBook: bookId });
+    void this.openAt(bookId, chapter);
+  };
+
+  private renderChapterPicker(currentLabel: string, currentLabelZh: string): ReactNode {
+    const { current, menu, navBook, navTestament } = this.state;
+    const open = menu === "chapters";
+
+    return (
+      <div className="chapter-picker">
+        <button
+          aria-expanded={open}
+          aria-haspopup="menu"
+          className="current-label"
+          onClick={this.toggleChapterPicker}
+          title="Choose a book and chapter"
+          type="button"
+        >
+          <span aria-live="polite" className="current-label-en">{currentLabel}</span>
+          <span className="current-label-zh" lang="zh">{currentLabelZh}</span>
+          <span aria-hidden="true" className="chapter-caret">▾</span>
+        </button>
+
+        {open && (
+          <div aria-label="Choose a book and chapter" className="menu chapter-menu" role="menu">
+            <div aria-label="Testament" className="testament-tabs" role="tablist">
+              {([["old", "Old Testament"], ["new", "New Testament"]] as [Testament, string][]).map(
+                ([testament, label]) => (
+                  <button
+                    aria-selected={navTestament === testament}
+                    key={testament}
+                    onClick={() => this.setState({ navTestament: testament })}
+                    role="tab"
+                    type="button"
+                  >
+                    {label}
+                  </button>
+                ),
+              )}
+            </div>
+
+            <div className="book-list" ref={this.navListRef}>
+              {scripture.booksIn(navTestament).map((book) => {
+                const expanded = navBook === book.id;
+                return (
+                  <div className="book-row" key={book.id} ref={expanded ? this.navBookRef : undefined}>
+                    <button
+                      aria-expanded={expanded}
+                      aria-label={book.name}
+                      className={expanded ? "book-name open" : "book-name"}
+                      onClick={() => this.setState({ navBook: expanded ? null : book.id })}
+                      type="button"
+                    >
+                      <span>{book.name}</span>
+                      <span className="book-zh" lang="zh">{book.zh}</span>
+                    </button>
+                    {expanded && (
+                      <div className="chapter-grid">
+                        {Array.from({ length: book.chapters }, (_, index) => index + 1).map((chapter) => {
+                          const here = current?.bookId === book.id && current.chapter === chapter;
+                          return (
+                            <button
+                              aria-current={here ? "page" : undefined}
+                              aria-label={`${book.name} ${chapter}`}
+                              className={here ? "chapter-number current" : "chapter-number"}
+                              key={chapter}
+                              onClick={() => this.pickChapter(book.id, chapter)}
+                              type="button"
+                            >
+                              {chapter}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   private renderHeader(
     currentLabel: string,
     currentLabelZh: string,
@@ -1082,10 +1200,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             </a>
           </div>
 
-          <span aria-live="polite" className="current-label">
-            <span className="current-label-en">{currentLabel}</span>
-            <span className="current-label-zh" lang="zh">{currentLabelZh}</span>
-          </span>
+          {this.renderChapterPicker(currentLabel, currentLabelZh)}
 
           <div className="header-actions">
             {narrow && (

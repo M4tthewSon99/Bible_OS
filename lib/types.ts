@@ -2,6 +2,8 @@ export type Language = "en" | "zh";
 export type LanguageMode = "both" | Language;
 export type EnglishSourceId = "web" | "mdesv" | "esvapi";
 
+export type Testament = "old" | "new";
+
 export interface Book {
   id: string;
   name: string;

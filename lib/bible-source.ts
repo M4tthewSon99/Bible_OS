@@ -1,11 +1,13 @@
 import { BY_ID, MD_DIRS, ORDER, STRUCTURE } from "./bible-books";
 import type {
+  Book,
   ChapterBlock,
   ChapterData,
   ChapterSide,
   EnglishSourceId,
   ScriptureReference,
   SearchResult,
+  Testament,
   VerseText,
 } from "./types";
 
@@ -289,6 +291,17 @@ export function slugToBook(slug: string): string | null {
     if (book.aliases.includes(normalized.replace(/[\s.]/g, ""))) return id;
   }
   return null;
+}
+
+const FIRST_NT = ORDER.indexOf("MAT");
+
+export function bookTestament(bookId: string): Testament {
+  return ORDER.indexOf(bookId) < FIRST_NT ? "old" : "new";
+}
+
+export function booksIn(testament: Testament): Book[] {
+  const ids = testament === "old" ? ORDER.slice(0, FIRST_NT) : ORDER.slice(FIRST_NT);
+  return ids.map((id) => BY_ID[id]);
 }
 
 export function nextChapter(bookId: string, chapter: number): { bookId: string; chapter: number } | null {
