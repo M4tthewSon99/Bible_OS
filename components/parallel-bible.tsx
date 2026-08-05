@@ -1,0 +1,1674 @@
+"use client";
+
+import {
+  Component,
+  createRef,
+  type ChangeEvent,
+  type CSSProperties,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
+import * as scripture from "@/lib/bible-source";
+import type {
+  Annotation,
+  ChapterData,
+  EnglishSourceId,
+  HighlightAnnotation,
+  HighlightDraft,
+  Language,
+  LanguageMode,
+  ParagraphBlock,
+  Preferences,
+  SearchResult,
+} from "@/lib/types";
+
+const STORAGE = {
+  preferences: "bibleos.prefs.v1",
+  annotations: "bibleos.annotations.v1",
+  position: "bibleos.position.v1",
+};
+const SIZES = [16, 17, 18, 19, 21, 23, 25];
+const SPACING = [
+  { label: "Snug", value: 1.55 },
+  { label: "Normal", value: 1.72 },
+  { label: "Roomy", value: 1.95 },
+];
+const MAX_LOADED = 8;
+
+interface LoadedChapter {
+  key: string;
+  bookId: string;
+  chapter: number;
+  status: "loading" | "ready" | "error";
+  label: string;
+  data?: ChapterData;
+}
+
+interface CurrentChapter {
+  bookId: string;
+  chapter: number;
+}
+
+interface SearchUiResult extends SearchResult {
+  go: () => void;
+}
+
+interface ReferenceHint {
+  bookId: string;
+  chapter: number;
+  verse: number | null;
+  label: string;
+  labelZh: string;
+}
+
+interface SelectionToolbar {
+  top: number;
+  left: number;
+  valid: boolean;
+  invalid: boolean;
+  draft?: HighlightDraft;
+}
+
+interface Toast {
+  message: string;
+  undo: boolean;
+}
+
+interface State {
+  chapters: LoadedChapter[];
+  current: CurrentChapter | null;
+  preferences: Preferences;
+  narrowLanguage: Language;
+  narrow: boolean;
+  annotations: Annotation[];
+  notesOpen: boolean;
+  activeId: string | null;
+  editorMode: "write" | "preview";
+  saveState: string;
+  menu: "language" | "appearance" | null;
+  keyField: boolean;
+  keyDraft: string;
+  query: string;
+  results: SearchUiResult[];
+  resultsOpen: boolean;
+  resultsNote: string;
+  searching: boolean;
+  referenceHint: ReferenceHint | null;
+  selectionToolbar: SelectionToolbar | null;
+  toast: Toast | null;
+  loadingMore: boolean;
+  atCanonStart: boolean;
+  atCanonEnd: boolean;
+}
+
+interface Segment {
+  off: number;
+  text: string;
+  vnum: number | null;
+  showNum: boolean;
+  verseKey: string | null;
+  annotationId: string | null;
+  linked: boolean;
+  linkTitle: string | null;
+  aria: string | null;
+  dot: boolean;
+}
+
+interface SavedPosition {
+  bookId: string;
+  chapter: number;
+  paraId?: string | null;
+}
+
+interface SegmentLocation {
+  off: number;
+  para: string;
+  lang: Language;
+}
+
+interface OpenAtOptions {
+  verse?: number | null;
+  paragraphId?: string | null;
+}
+
+export class ParallelBible extends Component<Record<string, never>, State> {
+  state: State = {
+    chapters: [],
+    current: null,
+    preferences: {
+      size: 19,
+      lh: 1.72,
+      langMode: "both",
+      showVerseNumbers: true,
+      showHeadings: true,
+    },
+    narrowLanguage: "en",
+    narrow: false,
+    annotations: [],
+    notesOpen: false,
+    activeId: null,
+    editorMode: "write",
+    saveState: "",
+    menu: null,
+    keyField: false,
+    keyDraft: "",
+    query: "",
+    results: [],
+    resultsOpen: false,
+    resultsNote: "",
+    searching: false,
+    referenceHint: null,
+    selectionToolbar: null,
+    toast: null,
+    loadingMore: false,
+    atCanonStart: false,
+    atCanonEnd: false,
+  };
+
+  private readonly fileRef = createRef<HTMLInputElement>();
+  private anchor: number | null = null;
+  private busy: "next" | "prev" | null = null;
+  private clearSave?: ReturnType<typeof setTimeout>;
+  private lastY: number | null = null;
+  private pendingScroll: { selector: string; at: number } | null = null;
+  private pendingUndo: Annotation | null = null;
+  private positionTimer?: ReturnType<typeof setTimeout>;
+  private saveTimer?: ReturnType<typeof setTimeout>;
+  private scrollTick: number | null = null;
+  private searchTimer?: ReturnType<typeof setTimeout>;
+  private searchToken?: symbol;
+  private selectionTimer?: ReturnType<typeof setTimeout>;
+  private toastTimer?: ReturnType<typeof setTimeout>;
+  private wentDeep = false;
+
+  componentDidMount(): void {
+    window.addEventListener("scroll", this.onScroll, { passive: true });
+    window.addEventListener("resize", this.onResize);
+    window.addEventListener("keydown", this.onKey);
+    window.addEventListener("hashchange", this.onHash);
+    document.addEventListener("selectionchange", this.onSelectionChange);
+    document.addEventListener("mousedown", this.onDocumentMouseDown, true);
+
+    this.setState({ narrow: window.innerWidth < 1100 });
+    this.applyCssVariables();
+
+    void scripture.ready().then(() => {
+      const preferences = this.readJson<Partial<Preferences>>(STORAGE.preferences);
+      const annotations = this.readJson<Annotation[]>(STORAGE.annotations);
+      const position = this.readJson<SavedPosition>(STORAGE.position);
+      this.setState(
+        (state) => ({
+          preferences: { ...state.preferences, ...(preferences || {}) },
+          annotations: Array.isArray(annotations) ? annotations : [],
+        }),
+        () => {
+          this.applyCssVariables();
+          const start = this.startReference(position);
+          const prefix = `${start.bookId}/${start.chapter}/`;
+          const paragraphId = position?.paraId?.startsWith(prefix) ? position.paraId : null;
+          void this.openAt(start.bookId, start.chapter, { paragraphId });
+        },
+      );
+    });
+  }
+
+  componentWillUnmount(): void {
+    window.removeEventListener("scroll", this.onScroll);
+    window.removeEventListener("resize", this.onResize);
+    window.removeEventListener("keydown", this.onKey);
+    window.removeEventListener("hashchange", this.onHash);
+    document.removeEventListener("selectionchange", this.onSelectionChange);
+    document.removeEventListener("mousedown", this.onDocumentMouseDown, true);
+    if (this.scrollTick !== null) cancelAnimationFrame(this.scrollTick);
+    [
+      this.clearSave,
+      this.positionTimer,
+      this.saveTimer,
+      this.searchTimer,
+      this.selectionTimer,
+      this.toastTimer,
+    ].forEach((timer) => timer && clearTimeout(timer));
+  }
+
+  componentDidUpdate(): void {
+    this.applyCssVariables();
+    if (this.anchor !== null) {
+      const delta = document.documentElement.scrollHeight - this.anchor;
+      this.anchor = null;
+      if (Math.abs(delta) > 2) window.scrollBy(0, delta);
+    }
+
+    if (this.pendingScroll) {
+      const target = this.pendingScroll;
+      const element = document.querySelector<HTMLElement>(target.selector);
+      if (element) {
+        this.pendingScroll = null;
+        this.scrollToElement(element);
+      } else if (Date.now() - target.at > 4_000) {
+        this.pendingScroll = null;
+      }
+    }
+  }
+
+  private applyCssVariables(): void {
+    const root = document.documentElement;
+    const { preferences } = this.state;
+    const languages = this.languages();
+    const sizeIndex = SIZES.indexOf(preferences.size);
+    root.style.setProperty("--os-size", `${preferences.size}px`);
+    root.style.setProperty("--os-lh", String(preferences.lh));
+    root.style.setProperty("--os-cols", languages.length === 2 ? "1fr 1fr" : "minmax(0, 44rem)");
+    root.style.setProperty("--os-gap", languages.length === 2 ? "66px" : "0px");
+    root.style.setProperty("--size-pct", `${Math.round((sizeIndex < 0 ? 3 : sizeIndex) / (SIZES.length - 1) * 100)}%`);
+  }
+
+  private readJson<T>(key: string): T | null {
+    try {
+      return JSON.parse(localStorage.getItem(key) || "null") as T | null;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeJson(key: string, value: unknown): void {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // The app continues in-memory when storage is unavailable.
+    }
+  }
+
+  private persistAnnotations = (annotations: Annotation[]): void => {
+    this.writeJson(STORAGE.annotations, annotations);
+  };
+
+  private setPreferences = (patch: Partial<Preferences>): void => {
+    this.setState((state) => {
+      const preferences = { ...state.preferences, ...patch };
+      this.writeJson(STORAGE.preferences, preferences);
+      return { preferences };
+    });
+  };
+
+  private startReference(position: SavedPosition | null): CurrentChapter {
+    const hash = location.hash.replace(/^#\/?/, "");
+    if (hash) {
+      const parts = hash.split("/").filter(Boolean);
+      const bookId = scripture.slugToBook(parts[0]);
+      if (bookId) return { bookId, chapter: Math.max(1, Number.parseInt(parts[1], 10) || 1) };
+    }
+    if (position?.bookId) return { bookId: position.bookId, chapter: position.chapter || 1 };
+    return { bookId: "MAT", chapter: 1 };
+  }
+
+  private onHash = (): void => {
+    const reference = this.startReference(null);
+    const { current } = this.state;
+    if (!current || current.bookId !== reference.bookId || current.chapter !== reference.chapter) {
+      void this.openAt(reference.bookId, reference.chapter);
+    }
+  };
+
+  private setUrl(bookId: string, chapter: number): void {
+    const next = `#/${scripture.bookSlug(bookId)}/${chapter}`;
+    if (location.hash !== next) history.replaceState(null, "", next);
+  }
+
+  private openAt = async (bookId: string, chapter: number, options: OpenAtOptions = {}): Promise<void> => {
+    const key = `${bookId}/${chapter}`;
+    this.setState({
+      chapters: [{ key, bookId, chapter, status: "loading", label: scripture.refLabel(bookId, chapter) }],
+      current: { bookId, chapter },
+      atCanonStart: false,
+      atCanonEnd: false,
+      activeId: null,
+    });
+    this.setUrl(bookId, chapter);
+    window.scrollTo(0, 0);
+    await this.fetchInto(key, bookId, chapter);
+
+    const selector = options.paragraphId
+      ? `[data-pk="${options.paragraphId}"]`
+      : options.verse
+        ? `[data-vk="${key}:${options.verse}:en"], [data-vk="${key}:${options.verse}:zh"]`
+        : null;
+    if (selector) this.pendingScroll = { selector, at: Date.now() };
+    else window.scrollTo(0, 0);
+  };
+
+  private fetchInto = async (key: string, bookId: string, chapter: number): Promise<void> => {
+    try {
+      const data = await scripture.getChapter(bookId, chapter);
+      this.patchChapter(key, { status: "ready", data });
+    } catch {
+      this.patchChapter(key, { status: "error" });
+    }
+  };
+
+  private patchChapter(key: string, patch: Partial<LoadedChapter>): void {
+    this.setState((state) => ({
+      chapters: state.chapters.map((chapter) => chapter.key === key ? { ...chapter, ...patch } : chapter),
+    }));
+  }
+
+  private retryChapter = (key: string): void => {
+    const chapter = this.state.chapters.find((candidate) => candidate.key === key);
+    if (!chapter) return;
+    this.patchChapter(key, { status: "loading" });
+    void this.fetchInto(key, chapter.bookId, chapter.chapter);
+  };
+
+  private extend = async (direction: "next" | "prev"): Promise<void> => {
+    if (this.busy === direction) return;
+    const { chapters } = this.state;
+    if (!chapters.length || chapters.length >= MAX_LOADED) return;
+    const edge = direction === "next" ? chapters.at(-1) : chapters[0];
+    if (!edge || edge.status !== "ready") return;
+
+    const reference = direction === "next"
+      ? scripture.nextChapter(edge.bookId, edge.chapter)
+      : scripture.prevChapter(edge.bookId, edge.chapter);
+    if (!reference) {
+      if (direction === "next") this.setState({ atCanonEnd: true });
+      else this.setState({ atCanonStart: true });
+      return;
+    }
+
+    this.busy = direction;
+    const key = `${reference.bookId}/${reference.chapter}`;
+    const entry: LoadedChapter = {
+      key,
+      bookId: reference.bookId,
+      chapter: reference.chapter,
+      status: "loading",
+      label: scripture.refLabel(reference.bookId, reference.chapter),
+    };
+    if (direction === "prev") this.anchor = document.documentElement.scrollHeight;
+    this.setState((state) => ({
+      chapters: direction === "next" ? [...state.chapters, entry] : [entry, ...state.chapters],
+      loadingMore: direction === "next",
+    }));
+
+    try {
+      const data = await scripture.getChapter(reference.bookId, reference.chapter);
+      if (direction === "prev") this.anchor = document.documentElement.scrollHeight;
+      this.patchChapter(key, { status: "ready", data });
+    } catch {
+      this.patchChapter(key, { status: "error" });
+    } finally {
+      this.busy = null;
+      this.setState({ loadingMore: false }, () => this.trimLoaded(direction));
+    }
+  };
+
+  private trimLoaded(direction: "next" | "prev"): void {
+    const budget = scripture.esvVerseBudget();
+    const { chapters, current } = this.state;
+    let total = chapters.reduce(
+      (sum, chapter) => sum + (chapter.status === "ready" ? chapter.data?.numbers.length || 0 : 0),
+      0,
+    );
+    if (total <= budget && chapters.length <= MAX_LOADED) return;
+
+    const keep = [...chapters];
+    const isCurrent = (chapter: LoadedChapter) =>
+      current?.bookId === chapter.bookId && current.chapter === chapter.chapter;
+    const overBudget = () => total > budget || keep.length > MAX_LOADED;
+
+    while (keep.length > 1 && overBudget()) {
+      const edge = direction === "next" ? keep[0] : keep.at(-1);
+      if (!edge || edge.status !== "ready" || isCurrent(edge)) break;
+      total -= edge.data?.numbers.length || 0;
+      if (direction === "next") keep.shift();
+      else keep.pop();
+    }
+
+    if (keep.length === chapters.length) return;
+    if (direction === "next") this.anchor = document.documentElement.scrollHeight;
+    this.setState({ chapters: keep });
+  }
+
+  private onScroll = (): void => {
+    if (this.scrollTick !== null) return;
+    this.scrollTick = requestAnimationFrame(() => {
+      this.scrollTick = null;
+      const documentElement = document.documentElement;
+      const y = window.scrollY;
+      const movingUp = y < (this.lastY ?? y) - 1;
+      if (y > 700) this.wentDeep = true;
+      if (y + window.innerHeight > documentElement.scrollHeight - 1_400) void this.extend("next");
+      if (movingUp && y < 420 && this.wentDeep) void this.extend("prev");
+      this.lastY = y;
+      this.trackPosition();
+    });
+  };
+
+  private trackPosition(): void {
+    const markers = document.querySelectorAll<HTMLElement>("[data-ck]");
+    let chapterKey: string | null = null;
+    let paragraphId: string | null = null;
+
+    for (const element of markers) {
+      if (element.getBoundingClientRect().top >= 160) break;
+      const candidate = element.dataset.ck || null;
+      if (candidate !== chapterKey) {
+        chapterKey = candidate;
+        paragraphId = null;
+      }
+      if (element.dataset.pk) paragraphId = element.dataset.pk;
+    }
+    if (!chapterKey) return;
+
+    const [bookId, chapterString] = chapterKey.split("/");
+    const chapter = Number(chapterString);
+    const { current } = this.state;
+    if (!current || current.bookId !== bookId || current.chapter !== chapter) {
+      this.setState({ current: { bookId, chapter } });
+      this.setUrl(bookId, chapter);
+    }
+
+    if (this.positionTimer) clearTimeout(this.positionTimer);
+    this.positionTimer = setTimeout(
+      () => this.writeJson(STORAGE.position, { bookId, chapter, paraId: paragraphId }),
+      500,
+    );
+  }
+
+  private scrollToElement(element: HTMLElement): void {
+    const top = element.getBoundingClientRect().top + window.scrollY - 132;
+    window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  }
+
+  private onResize = (): void => {
+    const narrow = window.innerWidth < 1100;
+    if (narrow !== this.state.narrow) this.setState({ narrow });
+  };
+
+  private languages(): Language[] {
+    const { narrow, narrowLanguage, preferences } = this.state;
+    if (narrow) return [narrowLanguage];
+    return preferences.langMode === "both" ? ["en", "zh"] : [preferences.langMode];
+  }
+
+  private onSelectionChange = (): void => {
+    if (this.selectionTimer) clearTimeout(this.selectionTimer);
+    this.selectionTimer = setTimeout(() => this.readSelection(), 130);
+  };
+
+  private readSelection(): void {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      if (this.state.selectionToolbar) this.setState({ selectionToolbar: null });
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const startLocation = this.segmentOf(range.startContainer);
+    const endLocation = this.segmentOf(range.endContainer);
+    const rectangle = range.getBoundingClientRect();
+    if (!rectangle || (!rectangle.width && !rectangle.height)) {
+      this.setState({ selectionToolbar: null });
+      return;
+    }
+
+    const position = {
+      top: Math.max(64, rectangle.top - 46),
+      left: rectangle.left + rectangle.width / 2,
+    };
+    if (!startLocation || !endLocation) {
+      this.setState({ selectionToolbar: null });
+      return;
+    }
+    if (startLocation.para !== endLocation.para || startLocation.lang !== endLocation.lang) {
+      this.setState({ selectionToolbar: { ...position, valid: false, invalid: true } });
+      return;
+    }
+
+    const paragraph = this.paragraphBlock(startLocation.para);
+    if (!paragraph) {
+      this.setState({ selectionToolbar: null });
+      return;
+    }
+
+    const side = paragraph[startLocation.lang];
+    let start = startLocation.off + range.startOffset;
+    let end = endLocation.off + range.endOffset;
+    if (end < start) [start, end] = [end, start];
+    while (start < end && /\s/.test(side.text[start])) start += 1;
+    while (end > start && /\s/.test(side.text[end - 1])) end -= 1;
+    if (end - start < 1) {
+      this.setState({ selectionToolbar: null });
+      return;
+    }
+
+    const verses = side.verses.filter((verse) => verse.off < end && verse.end > start);
+    const draft: HighlightDraft = {
+      paraId: paragraph.id,
+      key: paragraph.key,
+      bookId: paragraph.bookId,
+      chapter: paragraph.chapter,
+      lang: startLocation.lang,
+      start,
+      end,
+      vs: verses[0]?.n || paragraph.vs,
+      ve: verses.at(-1)?.n || paragraph.ve,
+      quote: side.text.slice(start, end),
+    };
+    this.setState({ selectionToolbar: { ...position, valid: true, invalid: false, draft } });
+  }
+
+  private segmentOf(node: Node): SegmentLocation | null {
+    let element = node.nodeType === Node.TEXT_NODE ? node.parentElement : node as Element;
+    element = element?.closest?.("[data-off]") || null;
+    if (!element) return null;
+    const para = element.getAttribute("data-para");
+    const lang = element.getAttribute("data-lang");
+    if (!para || (lang !== "en" && lang !== "zh")) return null;
+    return { off: Number(element.getAttribute("data-off")), para, lang };
+  }
+
+  private paragraphBlock(paragraphId: string): ParagraphBlock | null {
+    for (const chapter of this.state.chapters) {
+      if (chapter.status !== "ready" || !chapter.data) continue;
+      const block = chapter.data.blocks.find(
+        (candidate) => candidate.type === "para" && candidate.id === paragraphId,
+      );
+      if (block?.type === "para") return block;
+    }
+    return null;
+  }
+
+  private createAnnotation(draft: HighlightDraft, openPanel: boolean): void {
+    const id = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const now = new Date().toISOString();
+    const annotation: HighlightAnnotation = {
+      id,
+      v: 1,
+      kind: "highlight",
+      bookId: draft.bookId,
+      chapter: draft.chapter,
+      paraId: draft.paraId,
+      lang: draft.lang,
+      start: draft.start,
+      end: draft.end,
+      vs: draft.vs,
+      ve: draft.ve,
+      quote: draft.quote,
+      color: "yellow",
+      note: "",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.setState((state) => {
+      const annotations = [...state.annotations, annotation];
+      this.persistAnnotations(annotations);
+      return {
+        annotations,
+        selectionToolbar: null,
+        notesOpen: openPanel || state.notesOpen,
+        activeId: openPanel ? id : state.activeId,
+        editorMode: "write",
+      };
+    }, () => {
+      window.getSelection()?.removeAllRanges();
+      if (openPanel) {
+        setTimeout(() => document.querySelector<HTMLTextAreaElement>("aside textarea")?.focus(), 60);
+      }
+    });
+  }
+
+  private updateNote(id: string, note: string): void {
+    this.setState((state) => ({
+      annotations: state.annotations.map((annotation) =>
+        annotation.id === id ? { ...annotation, note, updatedAt: new Date().toISOString() } : annotation,
+      ),
+      saveState: "Saving…",
+    }));
+    this.scheduleAnnotationSave();
+  }
+
+  private scheduleAnnotationSave(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      this.persistAnnotations(this.state.annotations);
+      this.setState({ saveState: "Saved" });
+      if (this.clearSave) clearTimeout(this.clearSave);
+      this.clearSave = setTimeout(() => this.setState({ saveState: "" }), 2_200);
+    }, 350);
+  }
+
+  private deleteAnnotation(id: string): void {
+    const annotation = this.state.annotations.find((candidate) => candidate.id === id);
+    if (!annotation) return;
+    this.pendingUndo = annotation;
+    this.setState((state) => {
+      const annotations = state.annotations.filter((candidate) => candidate.id !== id);
+      this.persistAnnotations(annotations);
+      return {
+        annotations,
+        activeId: null,
+        toast: { message: "Annotation deleted.", undo: true },
+      };
+    });
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => this.setState({ toast: null }), 7_000);
+  }
+
+  private annotationsForChapter(key: string): HighlightAnnotation[] {
+    return this.state.annotations
+      .filter((annotation): annotation is HighlightAnnotation =>
+        annotation.kind === "highlight" && `${annotation.bookId}/${annotation.chapter}` === key,
+      )
+      .sort((left, right) => left.vs - right.vs || left.start - right.start);
+  }
+
+  private chapterNote(key: string): string {
+    const annotation = this.state.annotations.find(
+      (candidate) => candidate.kind === "chapter" && `${candidate.bookId}/${candidate.chapter}` === key,
+    );
+    return annotation?.note || "";
+  }
+
+  private setChapterNote(key: string, note: string): void {
+    const [bookId, chapterString] = key.split("/");
+    this.setState((state) => {
+      const index = state.annotations.findIndex(
+        (annotation) => annotation.kind === "chapter" && `${annotation.bookId}/${annotation.chapter}` === key,
+      );
+      const annotations = [...state.annotations];
+      if (index >= 0) {
+        annotations[index] = { ...annotations[index], note, updatedAt: new Date().toISOString() };
+      } else {
+        const now = new Date().toISOString();
+        annotations.push({
+          id: `c${key.replace("/", "-")}`,
+          v: 1,
+          kind: "chapter",
+          bookId,
+          chapter: Number(chapterString),
+          note,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      return { annotations, saveState: "Saving…" };
+    });
+    this.scheduleAnnotationSave();
+  }
+
+  private onKey = (event: globalThis.KeyboardEvent): void => {
+    const target = event.target as HTMLElement | null;
+    const typing = target && (
+      target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable
+    );
+    if (event.key === "Escape") {
+      if (this.state.selectionToolbar) this.setState({ selectionToolbar: null });
+      else if (this.state.resultsOpen) this.setState({ resultsOpen: false });
+      else if (this.state.menu) this.setState({ menu: null });
+      else if (typing) target.blur();
+      else if (this.state.notesOpen) this.setState({ notesOpen: false, activeId: null });
+      return;
+    }
+    if (typing) return;
+    if (event.key === "/") {
+      event.preventDefault();
+      document.querySelector<HTMLInputElement>('header input[type="search"]')?.focus();
+      return;
+    }
+    const toolbar = this.state.selectionToolbar;
+    if (!toolbar?.valid || !toolbar.draft) return;
+    if (event.key.toLowerCase() === "h") {
+      event.preventDefault();
+      this.createAnnotation(toolbar.draft, false);
+    }
+    if (event.key.toLowerCase() === "n") {
+      event.preventDefault();
+      this.createAnnotation(toolbar.draft, true);
+    }
+  };
+
+  private onDocumentMouseDown = (event: MouseEvent): void => {
+    if (!this.state.menu && !this.state.resultsOpen) return;
+    const target = event.target as Element | null;
+    if (!target?.closest?.("header")) this.setState({ menu: null, resultsOpen: false });
+  };
+
+  private runSearch(query: string): void {
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    const reference = scripture.parseReference(query);
+    const referenceHint = reference ? {
+      ...reference,
+      label: scripture.refLabel(reference.bookId, reference.chapter, reference.verse),
+      labelZh: scripture.refLabelZh(reference.bookId, reference.chapter, reference.verse),
+    } : null;
+    this.setState({
+      referenceHint,
+      resultsOpen: Boolean(referenceHint || query.trim().length >= 2),
+    });
+    if (referenceHint || query.trim().length < 2) {
+      this.setState({ results: [], resultsNote: "", searching: false });
+      return;
+    }
+
+    this.setState({ searching: true });
+    this.searchTimer = setTimeout(async () => {
+      const token = Symbol("search");
+      this.searchToken = token;
+      let output: Awaited<ReturnType<typeof scripture.keywordSearch>> = { results: [], scope: "empty" };
+      try {
+        output = await scripture.keywordSearch(query, 8);
+      } catch {
+        // The no-results state explains how to continue.
+      }
+      if (this.searchToken !== token) return;
+      this.setState({
+        searching: false,
+        results: output.results.map((result) => ({
+          ...result,
+          go: () => this.pickResult(result),
+        })),
+        resultsNote: output.results.length
+          ? output.scope === "cache"
+            ? "Chinese keyword search covers the chapters you have opened."
+            : ""
+          : "No matches. Try a reference like “John 3:16” or “约翰福音 3:16”.",
+      });
+    }, 420);
+  }
+
+  private pickResult(result: SearchResult): void {
+    this.setState({ resultsOpen: false, query: "" });
+    void this.openAt(result.bookId, result.chapter, { verse: result.verse });
+  }
+
+  private markdown(source: string): string {
+    const escape = (value: string) => value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    const inline = (value: string) => escape(value)
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>");
+    const output: string[] = [];
+    let list: "ul" | "ol" | null = null;
+    const closeList = () => {
+      if (list) output.push(`</${list}>`);
+      list = null;
+    };
+
+    source.replace(/\r/g, "").split("\n").forEach((raw) => {
+      const line = raw.trimEnd();
+      if (!line.trim()) {
+        closeList();
+        return;
+      }
+      let match = line.match(/^(#{1,3})\s+(.*)$/);
+      if (match) {
+        closeList();
+        output.push(`<h${match[1].length}>${inline(match[2])}</h${match[1].length}>`);
+        return;
+      }
+      match = line.match(/^>\s?(.*)$/);
+      if (match) {
+        closeList();
+        output.push(`<blockquote>${inline(match[1])}</blockquote>`);
+        return;
+      }
+      match = line.match(/^[-*+]\s+(.*)$/);
+      if (match) {
+        if (list !== "ul") {
+          closeList();
+          output.push("<ul>");
+          list = "ul";
+        }
+        output.push(`<li>${inline(match[1])}</li>`);
+        return;
+      }
+      match = line.match(/^\d+[.)]\s+(.*)$/);
+      if (match) {
+        if (list !== "ol") {
+          closeList();
+          output.push("<ol>");
+          list = "ol";
+        }
+        output.push(`<li>${inline(match[1])}</li>`);
+        return;
+      }
+      closeList();
+      output.push(`<p>${inline(line)}</p>`);
+    });
+    closeList();
+    return output.join("");
+  }
+
+  private exportBackup = (): void => {
+    const payload = {
+      app: "bible-os",
+      schema: 1,
+      exportedAt: new Date().toISOString(),
+      prefs: this.state.preferences,
+      annotations: this.state.annotations,
+      position: this.readJson<SavedPosition>(STORAGE.position),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const anchor = document.createElement("a");
+    anchor.href = URL.createObjectURL(blob);
+    anchor.download = "parallel-bible-backup.json";
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(anchor.href), 4_000);
+    this.flash("Backup exported.");
+  };
+
+  private onImportFile = (event: ChangeEvent<HTMLInputElement>): void => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result)) as {
+          annotations?: Annotation[];
+          prefs?: Partial<Preferences>;
+        };
+        const annotations = Array.isArray(data.annotations) ? data.annotations : [];
+        const preferences = { ...this.state.preferences, ...(data.prefs || {}) };
+        this.persistAnnotations(annotations);
+        this.writeJson(STORAGE.preferences, preferences);
+        this.setState({ annotations, preferences });
+        this.flash(`Backup imported — ${annotations.length} entries.`);
+      } catch {
+        this.flash("That file could not be read.");
+      }
+      event.target.value = "";
+    };
+    reader.readAsText(file);
+  };
+
+  private flash(message: string): void {
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.setState({ toast: { message, undo: false } });
+    this.toastTimer = setTimeout(() => this.setState({ toast: null }), 3_400);
+  }
+
+  private commitKey = (): void => {
+    const key = this.state.keyDraft.trim();
+    if (!key) return;
+    scripture.setEsvKey(key);
+    scripture.setEnglishSource("esvapi");
+    this.setState({ keyField: false, keyDraft: "", menu: null });
+    this.reloadCurrent("Reading the ESV from api.esv.org.");
+  };
+
+  private reloadCurrent(message: string): void {
+    this.flash(message);
+    const { current } = this.state;
+    if (current) void this.openAt(current.bookId, current.chapter);
+  }
+
+  private segments(block: ParagraphBlock, language: Language): Segment[] {
+    const side = block[language];
+    if (!side.text) return [];
+    const annotations = this.state.annotations.filter(
+      (annotation): annotation is HighlightAnnotation =>
+        annotation.kind === "highlight" && annotation.paraId === block.id,
+    );
+    const own = annotations.filter((annotation) => annotation.lang === language);
+    const linked = annotations
+      .filter((annotation) => annotation.lang !== language)
+      .flatMap((annotation) => {
+        const first = side.verses.find((verse) => verse.n === annotation.vs);
+        const last = side.verses.find((verse) => verse.n === annotation.ve) || first;
+        return first && last ? [{
+          id: annotation.id,
+          start: first.off,
+          end: last.end,
+          ref: scripture.refLabel(annotation.bookId, annotation.chapter, annotation.vs, annotation.ve),
+        }] : [];
+      });
+    const cuts = new Set([0, side.text.length]);
+    side.verses.forEach((verse) => cuts.add(verse.off));
+    own.forEach((annotation) => {
+      cuts.add(Math.max(0, Math.min(side.text.length, annotation.start)));
+      cuts.add(Math.max(0, Math.min(side.text.length, annotation.end)));
+    });
+    linked.forEach((range) => {
+      cuts.add(range.start);
+      cuts.add(range.end);
+    });
+
+    const points = [...cuts].filter((point) => point >= 0 && point <= side.text.length).sort((a, b) => a - b);
+    const output: Segment[] = [];
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = points[index];
+      const end = points[index + 1];
+      if (end <= start) continue;
+      const verse = side.verses.find((candidate) => start >= candidate.off && start < candidate.end)
+        || side.verses.at(-1);
+      const annotation = own.find((candidate) => candidate.start <= start && candidate.end >= end);
+      const linkedRange = annotation
+        ? undefined
+        : linked.find((candidate) => candidate.start <= start && candidate.end >= end);
+      const isVerseStart = Boolean(verse && start === verse.off);
+      output.push({
+        off: start,
+        text: side.text.slice(start, end),
+        vnum: verse?.n || null,
+        showNum: this.state.preferences.showVerseNumbers && isVerseStart,
+        verseKey: isVerseStart ? `${block.key}:${verse?.n}:${language}` : null,
+        annotationId: annotation?.id || linkedRange?.id || null,
+        linked: Boolean(linkedRange),
+        linkTitle: linkedRange
+          ? `Linked annotation — highlighted in the other translation at ${linkedRange.ref}`
+          : null,
+        aria: annotation
+          ? `Highlight, ${scripture.refLabel(annotation.bookId, annotation.chapter, annotation.vs, annotation.ve)}`
+          : null,
+        dot: Boolean(annotation?.note && annotation.end <= end),
+      });
+    }
+    return output;
+  }
+
+  private openAnnotation = (id: string): void => {
+    this.setState({ notesOpen: true, activeId: id, editorMode: "write" });
+  };
+
+  private focusAnnotation(annotation: HighlightAnnotation): void {
+    this.setState({ activeId: annotation.id, editorMode: "write" });
+    const element = document.querySelector<HTMLElement>(`[data-pk="${annotation.paraId}"]`);
+    if (element) this.scrollToElement(element);
+    else void this.openAt(annotation.bookId, annotation.chapter, {
+      verse: annotation.vs,
+      paragraphId: annotation.paraId,
+    });
+  }
+
+  private selectSource(source: EnglishSourceId): void {
+    const key = scripture.getEsvKey();
+    if (source === "esvapi" && !key) {
+      this.setState({ keyField: true, keyDraft: "" });
+      return;
+    }
+    scripture.setEnglishSource(source);
+    this.setState({ menu: null });
+    this.reloadCurrent(source === "web" ? "Reading the public-domain English text." : "Reading the ESV.");
+  }
+
+  private handleSearchSubmit = (event: FormEvent): void => {
+    event.preventDefault();
+    const reference = scripture.parseReference(this.state.query);
+    if (reference) {
+      this.setState({ resultsOpen: false, query: "" });
+      void this.openAt(reference.bookId, reference.chapter, { verse: reference.verse });
+    } else {
+      this.state.results[0]?.go();
+    }
+  };
+
+  private renderHeader(
+    currentLabel: string,
+    sourceId: EnglishSourceId,
+  ): ReactNode {
+    const {
+      annotations,
+      keyDraft,
+      keyField,
+      menu,
+      narrow,
+      narrowLanguage,
+      notesOpen,
+      preferences,
+      query,
+      referenceHint,
+      results,
+      resultsNote,
+      resultsOpen,
+      searching,
+    } = this.state;
+    const sources: { id: EnglishSourceId; label: string; hint: string }[] = [
+      { id: "web", label: "World English Bible", hint: "Public domain" },
+    { id: "mdesv", label: "ESV — hosted copy", hint: "mdbible plain text, personal use" },
+      {
+        id: "esvapi",
+        label: "ESV — api.esv.org",
+        hint: scripture.getEsvKey() ? "Using your saved key" : "Needs your own key",
+      },
+    ];
+    const highlightCount = annotations.filter((annotation) => annotation.kind === "highlight").length;
+
+    return (
+      <header className="app-header">
+        <div className="header-grid">
+          <div className="brand-block">
+            <a
+              className="brand"
+              href="#/"
+              onClick={(event) => {
+                event.preventDefault();
+                void this.openAt("MAT", 1);
+              }}
+            >
+              Parallel Bible
+            </a>
+            <span aria-hidden="true" className="brand-divider" />
+            <span aria-live="polite" className="current-label">{currentLabel}</span>
+          </div>
+
+          <div className="search-shell">
+            <form className="search-form" onSubmit={this.handleSearchSubmit} role="search">
+              <span aria-hidden="true" className="search-icon" />
+              <input
+                aria-label="Search a passage reference or keyword"
+                onChange={(event) => {
+                  this.setState({ query: event.target.value });
+                  this.runSearch(event.target.value);
+                }}
+                onFocus={() => query.trim() && this.setState({ resultsOpen: true })}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.stopPropagation();
+                    this.setState({ resultsOpen: false });
+                  }
+                }}
+                placeholder="Search a passage or keyword — “John 3:16”, “约翰福音 3:16”"
+                type="search"
+                value={query}
+              />
+              {searching && <span className="searching">searching</span>}
+            </form>
+
+            {resultsOpen && (
+              <div aria-label="Search results" className="search-results" role="listbox">
+                {referenceHint && (
+                  <button
+                    className="reference-result"
+                    onClick={() => {
+                      this.setState({ resultsOpen: false, query: "" });
+                      void this.openAt(referenceHint.bookId, referenceHint.chapter, { verse: referenceHint.verse });
+                    }}
+                    type="button"
+                  >
+                    <span className="go-to">Go to</span>
+                    <span className="result-ref-large">{referenceHint.label}</span>
+                    <span className="result-ref-zh">{referenceHint.labelZh}</span>
+                  </button>
+                )}
+                {results.map((result) => (
+                  <button className="search-result" key={`${result.ref}-${result.verse}`} onClick={result.go} type="button">
+                    <span className="result-meta">
+                      <span>{result.ref}</span>
+                      <span lang="zh">{result.refZh}</span>
+                    </span>
+                    <span className="result-english">{result.en}</span>
+                    <span className="result-chinese" lang="zh">{result.zh}</span>
+                  </button>
+                ))}
+                {resultsNote && <p className="results-note">{resultsNote}</p>}
+              </div>
+            )}
+          </div>
+
+          <div className="header-actions">
+            {narrow && (
+              <div aria-label="Translation" className="segmented" role="group">
+                {(["en", "zh"] as const).map((language) => (
+                  <button
+                    aria-pressed={narrowLanguage === language}
+                    className={narrowLanguage === language ? "active" : ""}
+                    key={language}
+                    onClick={() => this.setState({ narrowLanguage: language })}
+                    type="button"
+                  >
+                    {language === "en" ? "English" : "中文"}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {!narrow && (
+              <div className="menu-wrap">
+                <button
+                  aria-expanded={menu === "language"}
+                  aria-haspopup="menu"
+                  className="text-button"
+                  onClick={() => this.setState({ menu: menu === "language" ? null : "language" })}
+                  type="button"
+                >
+                  {preferences.langMode === "both"
+                    ? "Both languages"
+                    : preferences.langMode === "en" ? "English only" : "Chinese only"}
+                  <span aria-hidden="true">▾</span>
+                </button>
+                {menu === "language" && (
+                  <div aria-label="Language display" className="menu language-menu" role="menu">
+                    {([
+                      ["both", "Both, side by side"],
+                      ["en", "English only"],
+                      ["zh", "Chinese only"],
+                    ] as [LanguageMode, string][]).map(([mode, label]) => (
+                      <button
+                        aria-checked={preferences.langMode === mode}
+                        className="menu-choice"
+                        key={mode}
+                        onClick={() => {
+                          this.setPreferences({ langMode: mode });
+                          this.setState({ menu: null });
+                        }}
+                        role="menuitemradio"
+                        type="button"
+                      >
+                        {label}<span>{preferences.langMode === mode ? "●" : ""}</span>
+                      </button>
+                    ))}
+                    <div className="source-section">
+                      <p className="menu-eyebrow">English source</p>
+                      {sources.map((source) => (
+                        <button
+                          aria-checked={sourceId === source.id}
+                          className="source-choice"
+                          key={source.id}
+                          onClick={() => this.selectSource(source.id)}
+                          role="menuitemradio"
+                          type="button"
+                        >
+                          <span>
+                            <span>{source.label}</span>
+                            <small>{source.hint}</small>
+                          </span>
+                          <span className="choice-dot">{sourceId === source.id ? "●" : ""}</span>
+                        </button>
+                      ))}
+                      {keyField ? (
+                        <>
+                          <div className="key-entry">
+                            <input
+                              aria-label="ESV API key"
+                              onChange={(event) => this.setState({ keyDraft: event.target.value })}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  this.commitKey();
+                                }
+                              }}
+                              placeholder="Paste your ESV API key"
+                              type="password"
+                              value={keyDraft}
+                            />
+                            <button onClick={this.commitKey} type="button">Use</button>
+                          </div>
+                          <p className="key-note">
+                            Stays in this browser only. Free keys for non-commercial use at{" "}
+                            <a href="https://api.esv.org/" rel="noopener noreferrer" target="_blank">api.esv.org</a>.
+                          </p>
+                        </>
+                      ) : (
+                        <div className="key-actions">
+                          <button onClick={() => this.setState({ keyField: true, keyDraft: "" })} type="button">
+                            {scripture.getEsvKey() ? "Replace API key" : "Add an ESV API key"}
+                          </button>
+                          {scripture.getEsvKey() && (
+                            <button
+                              className="danger-quiet"
+                              onClick={() => {
+                                scripture.setEsvKey("");
+                                scripture.setEnglishSource("web");
+                                this.setState({ keyField: false, keyDraft: "", menu: null });
+                                this.reloadCurrent("Key forgotten — back to the public-domain text.");
+                              }}
+                              type="button"
+                            >
+                              Forget key
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="menu-wrap appearance-wrap">
+              <button
+                aria-expanded={menu === "appearance"}
+                aria-haspopup="menu"
+                className="text-button"
+                onClick={() => this.setState({ menu: menu === "appearance" ? null : "appearance" })}
+                type="button"
+              >
+                Appearance <span aria-hidden="true">▾</span>
+              </button>
+              {menu === "appearance" && (
+                <div aria-label="Text appearance" className="menu appearance-menu" role="menu">
+                  <p className="menu-eyebrow">Text size</p>
+                  <div className="size-control">
+                    <button
+                      aria-label="Decrease text size"
+                      onClick={() => {
+                        const index = SIZES.indexOf(preferences.size);
+                        this.setPreferences({ size: SIZES[Math.max(0, (index < 0 ? 3 : index) - 1)] });
+                      }}
+                      type="button"
+                    >A−</button>
+                    <div className="size-track"><span /></div>
+                    <button
+                      aria-label="Increase text size"
+                      onClick={() => {
+                        const index = SIZES.indexOf(preferences.size);
+                        this.setPreferences({ size: SIZES[Math.min(SIZES.length - 1, (index < 0 ? 3 : index) + 1)] });
+                      }}
+                      type="button"
+                    >A+</button>
+                  </div>
+                  <p className="menu-eyebrow">Line spacing</p>
+                  <div aria-label="Line spacing" className="spacing-control" role="group">
+                    {SPACING.map((option) => (
+                      <button
+                        aria-pressed={Math.abs(preferences.lh - option.value) < 0.01}
+                        className={Math.abs(preferences.lh - option.value) < 0.01 ? "active" : ""}
+                        key={option.label}
+                        onClick={() => this.setPreferences({ lh: option.value })}
+                        type="button"
+                      >{option.label}</button>
+                    ))}
+                  </div>
+                  <label className="toggle-row">
+                    Verse numbers
+                    <input
+                      checked={preferences.showVerseNumbers}
+                      onChange={() => this.setPreferences({ showVerseNumbers: !preferences.showVerseNumbers })}
+                      type="checkbox"
+                    />
+                  </label>
+                  <label className="toggle-row">
+                    Section headings
+                    <input
+                      checked={preferences.showHeadings}
+                      onChange={() => this.setPreferences({ showHeadings: !preferences.showHeadings })}
+                      type="checkbox"
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+
+            <button
+              aria-expanded={notesOpen}
+              className="notes-button"
+              onClick={() => this.setState({ notesOpen: !notesOpen, activeId: notesOpen ? null : this.state.activeId })}
+              type="button"
+            >
+              Notes
+              {highlightCount > 0 && <span>{highlightCount}</span>}
+            </button>
+          </div>
+        </div>
+      </header>
+    );
+  }
+
+  private renderSegments(block: ParagraphBlock, language: Language): ReactNode {
+    return this.segments(block, language).map((segment, index) => {
+      const shared = {
+        "data-lang": language,
+        "data-off": segment.off,
+        "data-para": block.id,
+        "data-vk": segment.verseKey || undefined,
+      };
+      let text: ReactNode;
+      if (segment.annotationId) {
+        text = (
+          <span
+            {...shared}
+            aria-label={segment.aria || undefined}
+            className={segment.linked ? "linked-annotation" : "highlight"}
+            data-ann={segment.annotationId}
+            onClick={() => this.openAnnotation(segment.annotationId as string)}
+            onKeyDown={(event: ReactKeyboardEvent<HTMLSpanElement>) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                this.openAnnotation(segment.annotationId as string);
+              }
+            }}
+            role="button"
+            tabIndex={0}
+            title={segment.linkTitle || undefined}
+          >
+            {segment.text}
+          </span>
+        );
+      } else {
+        text = <span {...shared}>{segment.text}</span>;
+      }
+
+      return (
+        <span className="segment-wrap" key={`${language}-${segment.off}-${index}`}>
+          {segment.showNum && <span aria-hidden="true" className="verse-number">{segment.vnum}</span>}
+          {text}
+          {segment.dot && segment.annotationId && (
+            <span
+              aria-label="Open note"
+              className="note-dot"
+              data-ann={segment.annotationId}
+              onClick={() => this.openAnnotation(segment.annotationId as string)}
+              onKeyDown={(event: ReactKeyboardEvent<HTMLSpanElement>) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  this.openAnnotation(segment.annotationId as string);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+            />
+          )}
+        </span>
+      );
+    });
+  }
+
+  private renderChapter(chapter: LoadedChapter, first: boolean, showEnglish: boolean, showChinese: boolean): ReactNode {
+    const titleClass = first ? "chapter-title first" : "chapter-title";
+    if (chapter.status !== "ready" || !chapter.data) {
+      return (
+        <div className="chapter-block" key={chapter.key}>
+          <div className={titleClass} data-ck={chapter.key}><h2>{chapter.label}</h2></div>
+          {chapter.status === "error" ? (
+            <div className="chapter-error" role="alert">
+              <span>This chapter didn’t load.</span>
+              <button onClick={() => this.retryChapter(chapter.key)} type="button">Retry</button>
+            </div>
+          ) : (
+            <div className="reading-grid skeleton-grid">
+              {showEnglish && <ReadingSkeleton lines={4} />}
+              {showChinese && <ReadingSkeleton lines={3} />}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div className="chapter-block" key={chapter.key}>
+        {chapter.data.blocks.map((block) => {
+          if (block.type === "title") {
+            return (
+              <div className={titleClass} data-ck={chapter.key} key={block.id}>
+                <h2>{block.text}</h2>
+              </div>
+            );
+          }
+          if (block.type === "heading") {
+            if (!this.state.preferences.showHeadings) return null;
+            return (
+              <div className="reading-grid heading-grid" key={block.id}>
+                {showEnglish && <h3 data-ck={chapter.key}>{block.en}</h3>}
+                {showChinese && <h3 lang="zh">{block.zh}</h3>}
+              </div>
+            );
+          }
+          return (
+            <div className="reading-grid paragraph-grid" key={block.id}>
+              {showEnglish && (
+                <p className="scripture english" data-ck={chapter.key} data-pk={block.id} lang="en">
+                  {this.renderSegments(block, "en")}
+                </p>
+              )}
+              {showChinese && (
+                <p className="scripture chinese" data-pk={block.id} lang="zh">
+                  {this.renderSegments(block, "zh")}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  private renderNotes(currentLabel: string, englishLabel: string): ReactNode {
+    const { activeId, annotations, current, editorMode, narrow, saveState } = this.state;
+    if (!this.state.notesOpen) return null;
+    const currentKey = current ? `${current.bookId}/${current.chapter}` : null;
+    const active = activeId
+      ? annotations.find((annotation): annotation is HighlightAnnotation =>
+        annotation.id === activeId && annotation.kind === "highlight",
+      )
+      : null;
+    const chapterAnnotations = currentKey ? this.annotationsForChapter(currentKey) : [];
+    const panelStyle = narrow ? { "--notes-mode": "fixed" } as CSSProperties : undefined;
+
+    return (
+      <aside aria-label="Notes" className="notes-panel" style={panelStyle}>
+        <div className="notes-header">
+          <span>Notes · {currentLabel}</span>
+          <button
+            aria-label="Close notes"
+            onClick={() => this.setState({ notesOpen: false, activeId: null })}
+            type="button"
+          >×</button>
+        </div>
+        <div className="notes-content">
+          {active ? (
+            <div>
+              <button className="back-button" onClick={() => this.setState({ activeId: null })} type="button">
+                ← All notes in this chapter
+              </button>
+              <p className="annotation-ref">
+                {scripture.refLabel(active.bookId, active.chapter, active.vs, active.ve)}
+              </p>
+              <p className="annotation-language">
+                {active.lang === "en" ? englishLabel : "和合本"} ·{" "}
+                {scripture.refLabelZh(active.bookId, active.chapter, active.vs, active.ve)}
+              </p>
+              <blockquote className="annotation-quote">{active.quote}</blockquote>
+              <p className="linked-explainer">
+                Linked in the other translation at{" "}
+                <span>{scripture.refLabelZh(active.bookId, active.chapter, active.vs, active.ve)}</span>
+                {" "}— wording is not matched word for word.
+              </p>
+              <div aria-label="Note editor mode" className="segmented editor-mode" role="group">
+                <button
+                  aria-pressed={editorMode === "write"}
+                  className={editorMode === "write" ? "active" : ""}
+                  onClick={() => this.setState({ editorMode: "write" })}
+                  type="button"
+                >Write</button>
+                <button
+                  aria-pressed={editorMode === "preview"}
+                  className={editorMode === "preview" ? "active" : ""}
+                  onClick={() => this.setState({ editorMode: "preview" })}
+                  type="button"
+                >Preview</button>
+              </div>
+              {editorMode === "write" ? (
+                <textarea
+                  aria-label="Note"
+                  className="note-editor"
+                  onChange={(event) => this.updateNote(active.id, event.target.value)}
+                  placeholder="Markdown welcome — **bold**, *italics*, # heading, - list, > quote, [link](https://…)"
+                  value={active.note}
+                />
+              ) : (
+                <div
+                  className="note-preview"
+                  dangerouslySetInnerHTML={{
+                    __html: active.note ? this.markdown(active.note) : '<p class="empty-preview">Nothing to preview yet.</p>',
+                  }}
+                />
+              )}
+              <div className="note-editor-footer">
+                <span aria-live="polite">{saveState}</span>
+                <button onClick={() => this.deleteAnnotation(active.id)} type="button">Delete annotation</button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <p className="notes-eyebrow">Chapter note</p>
+              <textarea
+                aria-label="Chapter note"
+                className="chapter-note"
+                onChange={(event) => currentKey && this.setChapterNote(currentKey, event.target.value)}
+                placeholder="A note for this whole chapter"
+                value={currentKey ? this.chapterNote(currentKey) : ""}
+              />
+              <p aria-live="polite" className="save-state">{saveState}</p>
+              <p className="notes-eyebrow">Highlights</p>
+              {chapterAnnotations.length ? chapterAnnotations.map((annotation) => (
+                <button
+                  className="annotation-list-item"
+                  key={annotation.id}
+                  onClick={() => this.focusAnnotation(annotation)}
+                  type="button"
+                >
+                  <span className="annotation-list-meta">
+                    <span>{scripture.refLabel(annotation.bookId, annotation.chapter, annotation.vs, annotation.ve)}</span>
+                    <span>{annotation.lang === "en" ? englishLabel : "和合本"}</span>
+                    {annotation.note && <span aria-label="has a note" className="note-present" />}
+                  </span>
+                  <span className="annotation-list-quote">
+                    {annotation.quote.length > 110 ? `${annotation.quote.slice(0, 110)}…` : annotation.quote}
+                  </span>
+                  {annotation.note && (
+                    <span className="annotation-list-note">
+                      {annotation.note.replace(/\s+/g, " ").slice(0, 90)}{annotation.note.length > 90 ? "…" : ""}
+                    </span>
+                  )}
+                </button>
+              )) : (
+                <p className="no-highlights">
+                  No highlights in this chapter yet. Select any words and press <kbd>H</kbd> to highlight or{" "}
+                  <kbd>N</kbd> to add a note.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="notes-footer">
+          <span>Saved in this browser</span>
+          <button onClick={this.exportBackup} type="button">Export backup</button>
+          <button onClick={() => this.fileRef.current?.click()} type="button">Import</button>
+        </div>
+      </aside>
+    );
+  }
+
+  render(): ReactNode {
+    const { chapters, current, selectionToolbar, toast } = this.state;
+    const languages = this.languages();
+    const showEnglish = languages.includes("en");
+    const showChinese = languages.includes("zh");
+    const sourceId = scripture.englishSourceId();
+    const esvStatus = scripture.esvState();
+    const usingEsv = sourceId !== "web" && esvStatus.ok;
+    const englishLabel = usingEsv ? scripture.englishSource() : "WEB";
+    const currentLabel = current ? scripture.refLabel(current.bookId, current.chapter) : "Loading";
+
+    return (
+      <div className="app-shell">
+        {this.renderHeader(currentLabel, sourceId)}
+        <div className="reader-with-notes">
+          <main className="reader">
+            <div className="reader-inner">
+              <div className="translation-labels">
+                {showEnglish && <span>{englishLabel}</span>}
+                {showChinese && <span lang="zh">和合本</span>}
+              </div>
+              {this.state.atCanonStart && <p className="canon-edge">Beginning of the canon</p>}
+              {chapters.map((chapter, index) =>
+                this.renderChapter(chapter, index === 0, showEnglish, showChinese),
+              )}
+              {this.state.loadingMore && <p className="canon-edge loading">Loading the next chapter</p>}
+              {this.state.atCanonEnd && <p className="canon-edge">End of the canon</p>}
+              {!esvStatus.ok && <p className="source-notice" role="status">{esvStatus.message}</p>}
+              {usingEsv ? (
+                <p className="copyright">
+                  Scripture quotations marked “ESV” are from the ESV® Bible (The Holy Bible, English Standard
+                  Version®), © 2001 by Crossway, a publishing ministry of Good News Publishers. Used by permission.
+                  All rights reserved. Chinese text is the Chinese Union Version (和合本), public domain.{" "}
+                  <a href="https://www.esv.org/" rel="noopener noreferrer" target="_blank">www.esv.org</a>
+                </p>
+              ) : (
+                <p className="copyright">
+                  English: World English Bible, public domain. Chinese: Chinese Union Version (和合本), public
+                  domain. Switch the English source in the language menu to read the ESV.
+                </p>
+              )}
+            </div>
+          </main>
+          {this.renderNotes(currentLabel, englishLabel)}
+        </div>
+
+        {selectionToolbar && (
+          <div
+            aria-label="Selection actions"
+            className="selection-toolbar"
+            role="toolbar"
+            style={{ top: selectionToolbar.top, left: selectionToolbar.left }}
+          >
+            {selectionToolbar.valid && selectionToolbar.draft ? (
+              <>
+                <button onClick={() => this.createAnnotation(selectionToolbar.draft as HighlightDraft, false)} type="button">
+                  Highlight <kbd>H</kbd>
+                </button>
+                <span aria-hidden="true" className="toolbar-divider" />
+                <button onClick={() => this.createAnnotation(selectionToolbar.draft as HighlightDraft, true)} type="button">
+                  Add note <kbd>N</kbd>
+                </button>
+              </>
+            ) : (
+              <span className="invalid-selection">
+                Keep a selection inside one aligned paragraph — cross a paragraph and it needs its own annotation.
+              </span>
+            )}
+          </div>
+        )}
+
+        {toast && (
+          <div className="toast" role="status">
+            {toast.message}
+            {toast.undo && (
+              <button
+                onClick={() => {
+                  const annotation = this.pendingUndo;
+                  if (this.toastTimer) clearTimeout(this.toastTimer);
+                  if (!annotation) {
+                    this.setState({ toast: null });
+                    return;
+                  }
+                  this.pendingUndo = null;
+                  this.setState((state) => {
+                    const annotations = [...state.annotations, annotation];
+                    this.persistAnnotations(annotations);
+                    return { annotations, toast: null };
+                  });
+                }}
+                type="button"
+              >Undo</button>
+            )}
+          </div>
+        )}
+
+        <input
+          accept="application/json"
+          aria-hidden="true"
+          className="file-input"
+          onChange={this.onImportFile}
+          ref={this.fileRef}
+          tabIndex={-1}
+          type="file"
+        />
+      </div>
+    );
+  }
+}
+
+function ReadingSkeleton({ lines }: { lines: number }) {
+  return (
+    <div aria-hidden="true" className="reading-skeleton">
+      {Array.from({ length: lines }, (_, index) => <span key={index} />)}
+    </div>
+  );
+}
