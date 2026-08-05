@@ -3,7 +3,7 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Parallel Bible",
+  title: "Bible OS",
   description: "A quiet, bilingual Bible reader with highlights and notes.",
 };
 

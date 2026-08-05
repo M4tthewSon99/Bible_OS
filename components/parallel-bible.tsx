@@ -86,10 +86,11 @@ interface State {
   activeId: string | null;
   editorMode: "write" | "preview";
   saveState: string;
-  menu: "language" | "appearance" | null;
+  menu: "settings" | null;
   keyField: boolean;
   keyDraft: string;
   query: string;
+  spotlightOpen: boolean;
   results: SearchUiResult[];
   resultsOpen: boolean;
   resultsNote: string;
@@ -154,6 +155,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     keyField: false,
     keyDraft: "",
     query: "",
+    spotlightOpen: false,
     results: [],
     resultsOpen: false,
     resultsNote: "",
@@ -167,6 +169,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   };
 
   private readonly fileRef = createRef<HTMLInputElement>();
+  private readonly spotlightInputRef = createRef<HTMLInputElement>();
   private anchor: number | null = null;
   private busy: "next" | "prev" | null = null;
   private clearSave?: ReturnType<typeof setTimeout>;
@@ -703,9 +706,14 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const typing = target && (
       target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable
     );
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      this.openSpotlight();
+      return;
+    }
     if (event.key === "Escape") {
-      if (this.state.selectionToolbar) this.setState({ selectionToolbar: null });
-      else if (this.state.resultsOpen) this.setState({ resultsOpen: false });
+      if (this.state.spotlightOpen) this.closeSpotlight();
+      else if (this.state.selectionToolbar) this.setState({ selectionToolbar: null });
       else if (this.state.menu) this.setState({ menu: null });
       else if (typing) target.blur();
       else if (this.state.notesOpen) this.setState({ notesOpen: false, activeId: null });
@@ -714,7 +722,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     if (typing) return;
     if (event.key === "/") {
       event.preventDefault();
-      document.querySelector<HTMLInputElement>('header input[type="search"]')?.focus();
+      this.openSpotlight();
       return;
     }
     const toolbar = this.state.selectionToolbar;
@@ -733,6 +741,22 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     if (!this.state.menu && !this.state.resultsOpen) return;
     const target = event.target as Element | null;
     if (!target?.closest?.("header")) this.setState({ menu: null, resultsOpen: false });
+  };
+
+  private openSpotlight = (): void => {
+    this.setState({ spotlightOpen: true });
+    setTimeout(() => this.spotlightInputRef.current?.focus(), 30);
+  };
+
+  private closeSpotlight = (): void => {
+    this.setState({
+      spotlightOpen: false,
+      resultsOpen: false,
+      query: "",
+      results: [],
+      resultsNote: "",
+      referenceHint: null,
+    });
   };
 
   private runSearch(query: string): void {
@@ -779,7 +803,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   }
 
   private pickResult(result: SearchResult): void {
-    this.setState({ resultsOpen: false, query: "" });
+    this.closeSpotlight();
     void this.openAt(result.bookId, result.chapter, { verse: result.verse });
   }
 
@@ -1001,7 +1025,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     event.preventDefault();
     const reference = scripture.parseReference(this.state.query);
     if (reference) {
-      this.setState({ resultsOpen: false, query: "" });
+      this.closeSpotlight();
       void this.openAt(reference.bookId, reference.chapter, { verse: reference.verse });
     } else {
       this.state.results[0]?.go();
@@ -1027,6 +1051,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       resultsNote,
       resultsOpen,
       searching,
+      spotlightOpen,
     } = this.state;
     const sources: { id: EnglishSourceId; label: string; hint: string }[] = [
       { id: "web", label: "World English Bible", hint: "Public domain" },
@@ -1040,7 +1065,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const highlightCount = annotations.filter((annotation) => annotation.kind === "highlight").length;
 
     return (
-      <header className="app-header">
+      <>
+        <header className="app-header">
         <div className="header-grid">
           <div className="brand-block">
             <a
@@ -1051,14 +1077,212 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                 void this.openAt("MAT", 1);
               }}
             >
-              Parallel Bible
+              Bible OS
             </a>
             <span aria-hidden="true" className="brand-divider" />
             <span aria-live="polite" className="current-label">{currentLabel}</span>
           </div>
 
-          <div className="search-shell">
-            <form className="search-form" onSubmit={this.handleSearchSubmit} role="search">
+          <div className="header-actions">
+            {narrow && (
+              <div aria-label="Translation" className="segmented" role="group">
+                {(["en", "zh"] as const).map((language) => (
+                  <button
+                    aria-pressed={narrowLanguage === language}
+                    className={narrowLanguage === language ? "active" : ""}
+                    key={language}
+                    onClick={() => this.setState({ narrowLanguage: language })}
+                    type="button"
+                  >
+                    {language === "en" ? "English" : "中文"}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="menu-wrap">
+              <button
+                aria-expanded={menu === "settings"}
+                aria-haspopup="menu"
+                aria-label="Display settings"
+                className="icon-button"
+                onClick={() => this.setState({ menu: menu === "settings" ? null : "settings" })}
+                type="button"
+              >
+                <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24" width="15">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              </button>
+              {menu === "settings" && (
+                <div aria-label="Display settings" className="menu settings-menu" role="menu">
+                  {!narrow && (
+                    <div className="settings-section">
+                      <p className="menu-eyebrow">Language display</p>
+                      {([
+                        ["both", "Both, side by side"],
+                        ["en", "English only"],
+                        ["zh", "Chinese only"],
+                      ] as [LanguageMode, string][]).map(([mode, label]) => (
+                        <button
+                          aria-checked={preferences.langMode === mode}
+                          className="menu-choice"
+                          key={mode}
+                          onClick={() => this.setPreferences({ langMode: mode })}
+                          role="menuitemradio"
+                          type="button"
+                        >
+                          {label}<span>{preferences.langMode === mode ? "●" : ""}</span>
+                        </button>
+                      ))}
+                      <div className="source-section">
+                        <p className="menu-eyebrow">English source</p>
+                        {sources.map((source) => (
+                          <button
+                            aria-checked={sourceId === source.id}
+                            className="source-choice"
+                            key={source.id}
+                            onClick={() => this.selectSource(source.id)}
+                            role="menuitemradio"
+                            type="button"
+                          >
+                            <span>
+                              <span>{source.label}</span>
+                              <small>{source.hint}</small>
+                            </span>
+                            <span className="choice-dot">{sourceId === source.id ? "●" : ""}</span>
+                          </button>
+                        ))}
+                        {keyField ? (
+                          <>
+                            <div className="key-entry">
+                              <input
+                                aria-label="ESV API key"
+                                onChange={(event) => this.setState({ keyDraft: event.target.value })}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    this.commitKey();
+                                  }
+                                }}
+                                placeholder="Paste your ESV API key"
+                                type="password"
+                                value={keyDraft}
+                              />
+                              <button onClick={this.commitKey} type="button">Use</button>
+                            </div>
+                            <p className="key-note">
+                              Stays in this browser only. Free keys for non-commercial use at{" "}
+                              <a href="https://api.esv.org/" rel="noopener noreferrer" target="_blank">api.esv.org</a>.
+                            </p>
+                          </>
+                        ) : (
+                          <div className="key-actions">
+                            <button onClick={() => this.setState({ keyField: true, keyDraft: "" })} type="button">
+                              {scripture.getEsvKey() ? "Replace API key" : "Add an ESV API key"}
+                            </button>
+                            {scripture.getEsvKey() && (
+                              <button
+                                className="danger-quiet"
+                                onClick={() => {
+                                  scripture.setEsvKey("");
+                                  scripture.setEnglishSource("web");
+                                  this.setState({ keyField: false, keyDraft: "" });
+                                  this.reloadCurrent("Key forgotten — back to the public-domain text.");
+                                }}
+                                type="button"
+                              >
+                                Forget key
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <div className="settings-section">
+                    <p className="menu-eyebrow">Text size</p>
+                    <div className="size-control">
+                      <button
+                        aria-label="Decrease text size"
+                        onClick={() => {
+                          const index = SIZES.indexOf(preferences.size);
+                          this.setPreferences({ size: SIZES[Math.max(0, (index < 0 ? 3 : index) - 1)] });
+                        }}
+                        type="button"
+                      >A−</button>
+                      <div className="size-track"><span /></div>
+                      <button
+                        aria-label="Increase text size"
+                        onClick={() => {
+                          const index = SIZES.indexOf(preferences.size);
+                          this.setPreferences({ size: SIZES[Math.min(SIZES.length - 1, (index < 0 ? 3 : index) + 1)] });
+                        }}
+                        type="button"
+                      >A+</button>
+                    </div>
+                    <p className="menu-eyebrow">Line spacing</p>
+                    <div aria-label="Line spacing" className="spacing-control" role="group">
+                      {SPACING.map((option) => (
+                        <button
+                          aria-pressed={Math.abs(preferences.lh - option.value) < 0.01}
+                          className={Math.abs(preferences.lh - option.value) < 0.01 ? "active" : ""}
+                          key={option.label}
+                          onClick={() => this.setPreferences({ lh: option.value })}
+                          type="button"
+                        >{option.label}</button>
+                      ))}
+                    </div>
+                    <label className="toggle-row">
+                      Verse numbers
+                      <input
+                        checked={preferences.showVerseNumbers}
+                        onChange={() => this.setPreferences({ showVerseNumbers: !preferences.showVerseNumbers })}
+                        type="checkbox"
+                      />
+                    </label>
+                    <label className="toggle-row">
+                      Section headings
+                      <input
+                        checked={preferences.showHeadings}
+                        onChange={() => this.setPreferences({ showHeadings: !preferences.showHeadings })}
+                        type="checkbox"
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button
+              aria-expanded={notesOpen}
+              aria-label="Notes"
+              className="icon-button notes-button"
+              onClick={() => this.setState({ notesOpen: !notesOpen, activeId: notesOpen ? null : this.state.activeId })}
+              type="button"
+            >
+              <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24" width="15">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M9 13h6" />
+                <path d="M9 17h6" />
+              </svg>
+              {highlightCount > 0 && <span>{highlightCount}</span>}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {spotlightOpen && (
+        <div className="spotlight-backdrop" onClick={this.closeSpotlight}>
+          <div
+            aria-label="Search"
+            aria-modal="true"
+            className="spotlight"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <form className="spotlight-form" onSubmit={this.handleSearchSubmit} role="search">
               <span aria-hidden="true" className="search-icon" />
               <input
                 aria-label="Search a passage reference or keyword"
@@ -1066,14 +1290,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                   this.setState({ query: event.target.value });
                   this.runSearch(event.target.value);
                 }}
-                onFocus={() => query.trim() && this.setState({ resultsOpen: true })}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.stopPropagation();
-                    this.setState({ resultsOpen: false });
-                  }
-                }}
                 placeholder="Search a passage or keyword — “John 3:16”, “约翰福音 3:16”"
+                ref={this.spotlightInputRef}
                 type="search"
                 value={query}
               />
@@ -1081,12 +1299,12 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             </form>
 
             {resultsOpen && (
-              <div aria-label="Search results" className="search-results" role="listbox">
+              <div aria-label="Search results" className="spotlight-results" role="listbox">
                 {referenceHint && (
                   <button
                     className="reference-result"
                     onClick={() => {
-                      this.setState({ resultsOpen: false, query: "" });
+                      this.closeSpotlight();
                       void this.openAt(referenceHint.bookId, referenceHint.chapter, { verse: referenceHint.verse });
                     }}
                     type="button"
@@ -1110,203 +1328,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
               </div>
             )}
           </div>
-
-          <div className="header-actions">
-            {narrow && (
-              <div aria-label="Translation" className="segmented" role="group">
-                {(["en", "zh"] as const).map((language) => (
-                  <button
-                    aria-pressed={narrowLanguage === language}
-                    className={narrowLanguage === language ? "active" : ""}
-                    key={language}
-                    onClick={() => this.setState({ narrowLanguage: language })}
-                    type="button"
-                  >
-                    {language === "en" ? "English" : "中文"}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {!narrow && (
-              <div className="menu-wrap">
-                <button
-                  aria-expanded={menu === "language"}
-                  aria-haspopup="menu"
-                  className="text-button"
-                  onClick={() => this.setState({ menu: menu === "language" ? null : "language" })}
-                  type="button"
-                >
-                  {preferences.langMode === "both"
-                    ? "Both languages"
-                    : preferences.langMode === "en" ? "English only" : "Chinese only"}
-                  <span aria-hidden="true">▾</span>
-                </button>
-                {menu === "language" && (
-                  <div aria-label="Language display" className="menu language-menu" role="menu">
-                    {([
-                      ["both", "Both, side by side"],
-                      ["en", "English only"],
-                      ["zh", "Chinese only"],
-                    ] as [LanguageMode, string][]).map(([mode, label]) => (
-                      <button
-                        aria-checked={preferences.langMode === mode}
-                        className="menu-choice"
-                        key={mode}
-                        onClick={() => {
-                          this.setPreferences({ langMode: mode });
-                          this.setState({ menu: null });
-                        }}
-                        role="menuitemradio"
-                        type="button"
-                      >
-                        {label}<span>{preferences.langMode === mode ? "●" : ""}</span>
-                      </button>
-                    ))}
-                    <div className="source-section">
-                      <p className="menu-eyebrow">English source</p>
-                      {sources.map((source) => (
-                        <button
-                          aria-checked={sourceId === source.id}
-                          className="source-choice"
-                          key={source.id}
-                          onClick={() => this.selectSource(source.id)}
-                          role="menuitemradio"
-                          type="button"
-                        >
-                          <span>
-                            <span>{source.label}</span>
-                            <small>{source.hint}</small>
-                          </span>
-                          <span className="choice-dot">{sourceId === source.id ? "●" : ""}</span>
-                        </button>
-                      ))}
-                      {keyField ? (
-                        <>
-                          <div className="key-entry">
-                            <input
-                              aria-label="ESV API key"
-                              onChange={(event) => this.setState({ keyDraft: event.target.value })}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") {
-                                  event.preventDefault();
-                                  this.commitKey();
-                                }
-                              }}
-                              placeholder="Paste your ESV API key"
-                              type="password"
-                              value={keyDraft}
-                            />
-                            <button onClick={this.commitKey} type="button">Use</button>
-                          </div>
-                          <p className="key-note">
-                            Stays in this browser only. Free keys for non-commercial use at{" "}
-                            <a href="https://api.esv.org/" rel="noopener noreferrer" target="_blank">api.esv.org</a>.
-                          </p>
-                        </>
-                      ) : (
-                        <div className="key-actions">
-                          <button onClick={() => this.setState({ keyField: true, keyDraft: "" })} type="button">
-                            {scripture.getEsvKey() ? "Replace API key" : "Add an ESV API key"}
-                          </button>
-                          {scripture.getEsvKey() && (
-                            <button
-                              className="danger-quiet"
-                              onClick={() => {
-                                scripture.setEsvKey("");
-                                scripture.setEnglishSource("web");
-                                this.setState({ keyField: false, keyDraft: "", menu: null });
-                                this.reloadCurrent("Key forgotten — back to the public-domain text.");
-                              }}
-                              type="button"
-                            >
-                              Forget key
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="menu-wrap appearance-wrap">
-              <button
-                aria-expanded={menu === "appearance"}
-                aria-haspopup="menu"
-                className="text-button"
-                onClick={() => this.setState({ menu: menu === "appearance" ? null : "appearance" })}
-                type="button"
-              >
-                Appearance <span aria-hidden="true">▾</span>
-              </button>
-              {menu === "appearance" && (
-                <div aria-label="Text appearance" className="menu appearance-menu" role="menu">
-                  <p className="menu-eyebrow">Text size</p>
-                  <div className="size-control">
-                    <button
-                      aria-label="Decrease text size"
-                      onClick={() => {
-                        const index = SIZES.indexOf(preferences.size);
-                        this.setPreferences({ size: SIZES[Math.max(0, (index < 0 ? 3 : index) - 1)] });
-                      }}
-                      type="button"
-                    >A−</button>
-                    <div className="size-track"><span /></div>
-                    <button
-                      aria-label="Increase text size"
-                      onClick={() => {
-                        const index = SIZES.indexOf(preferences.size);
-                        this.setPreferences({ size: SIZES[Math.min(SIZES.length - 1, (index < 0 ? 3 : index) + 1)] });
-                      }}
-                      type="button"
-                    >A+</button>
-                  </div>
-                  <p className="menu-eyebrow">Line spacing</p>
-                  <div aria-label="Line spacing" className="spacing-control" role="group">
-                    {SPACING.map((option) => (
-                      <button
-                        aria-pressed={Math.abs(preferences.lh - option.value) < 0.01}
-                        className={Math.abs(preferences.lh - option.value) < 0.01 ? "active" : ""}
-                        key={option.label}
-                        onClick={() => this.setPreferences({ lh: option.value })}
-                        type="button"
-                      >{option.label}</button>
-                    ))}
-                  </div>
-                  <label className="toggle-row">
-                    Verse numbers
-                    <input
-                      checked={preferences.showVerseNumbers}
-                      onChange={() => this.setPreferences({ showVerseNumbers: !preferences.showVerseNumbers })}
-                      type="checkbox"
-                    />
-                  </label>
-                  <label className="toggle-row">
-                    Section headings
-                    <input
-                      checked={preferences.showHeadings}
-                      onChange={() => this.setPreferences({ showHeadings: !preferences.showHeadings })}
-                      type="checkbox"
-                    />
-                  </label>
-                </div>
-              )}
-            </div>
-
-            <button
-              aria-expanded={notesOpen}
-              className="notes-button"
-              onClick={() => this.setState({ notesOpen: !notesOpen, activeId: notesOpen ? null : this.state.activeId })}
-              type="button"
-            >
-              Notes
-              {highlightCount > 0 && <span>{highlightCount}</span>}
-            </button>
-          </div>
         </div>
-      </header>
+        )}
+      </>
     );
   }
 
