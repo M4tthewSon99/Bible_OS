@@ -20,7 +20,6 @@ declare global {
 }
 
 const API = "https://bible-api.com/data";
-const SEARCH_API = "https://dailybible.ca/api/search";
 const ESV_KEY_LS = "bibleos.esvKey.v1";
 const SRC_LS = "bibleos.englishSource.v1";
 const ESV_VERSE_BUDGET = 450;
@@ -541,6 +540,7 @@ function searchCache(query: string): SearchResult[] {
   const output: SearchResult[] = [];
 
   for (const chapter of chapterCache.values()) {
+    if (chapter.source !== "ESV") continue;
     for (const verse of chapter.numbers) {
       const en = chapter.enText[verse] || "";
       const zh = chapter.zhText[verse] || "";
@@ -565,75 +565,4 @@ function searchCache(query: string): SearchResult[] {
 export function localKeywordSearch(query: string, limit = 8): SearchResult[] {
   if (CJK.test(query)) return [];
   return searchCache(query.trim()).slice(0, limit);
-}
-
-interface RemoteSearchResult {
-  book_id: string;
-  chapter: number;
-  verse: number;
-  text: string;
-}
-
-export async function keywordSearch(
-  query: string,
-  limit = 8,
-  signal?: AbortSignal,
-): Promise<{ results: SearchResult[]; scope: "none" | "cache" | "empty" | "canon" | "partial" | "error" }> {
-  const normalized = query.trim();
-  if (normalized.length < 2) return { results: [], scope: "none" };
-
-  const local = searchCache(normalized);
-  if (CJK.test(normalized)) return { results: [], scope: "none" };
-
-  let remote: RemoteSearchResult[] = [];
-  let remoteFailed = false;
-  try {
-    const data = await getJSON<{ results?: RemoteSearchResult[] }>(
-      `${SEARCH_API}?q=${encodeURIComponent(normalized)}&translation=asv&limit=24`,
-      signal,
-    );
-    remote = (data.results || []).filter((result) => BY_ID[result.book_id]);
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    remoteFailed = true;
-  }
-
-  if (!remote.length) {
-    return {
-      results: local.slice(0, limit),
-      scope: local.length
-        ? remoteFailed ? "partial" : "cache"
-        : remoteFailed ? "error" : "empty",
-    };
-  }
-
-  const keys = [...new Set(remote.map((result) => chapterKey(result.book_id, result.chapter)))].slice(0, 10);
-  await Promise.all(keys.map((key) => {
-    const [bookId, chapter] = key.split("/");
-    return getChapter(bookId, Number(chapter)).catch(() => null);
-  }));
-
-  const merged = new Map<string, SearchResult>();
-  local.forEach((result) => merged.set(`${result.bookId}/${result.chapter}/${result.verse}`, result));
-  remote.forEach((result) => {
-    const chapter = chapterCache.get(chapterKey(result.book_id, result.chapter));
-    const en = chapter ? chapter.enText[result.verse] || "" : cleanEnglish(result.text);
-    if (!englishMatches(en, normalized)) return;
-    const key = `${result.book_id}/${result.chapter}/${result.verse}`;
-    if (merged.has(key)) return;
-    merged.set(key, {
-      bookId: result.book_id,
-      chapter: result.chapter,
-      verse: result.verse,
-      ref: refLabel(result.book_id, result.chapter, result.verse),
-      refZh: refLabelZh(result.book_id, result.chapter, result.verse),
-      en: snippet(en, 150),
-      zh: snippet(chapter ? chapter.zhText[result.verse] || "" : "", 60),
-    });
-  });
-
-  return {
-    scope: "canon",
-    results: [...merged.values()].slice(0, limit),
-  };
 }

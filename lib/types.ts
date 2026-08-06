@@ -79,10 +79,14 @@ export interface SearchResult {
   bookId: string;
   chapter: number;
   verse: number;
+  verseEnd?: number;
   ref: string;
-  refZh: string;
+  refZh?: string;
   en: string;
-  zh: string;
+  zh?: string;
+  matchKind?: "exact-phrase" | "all-terms" | "prefix" | "fuzzy";
+  score?: number;
+  rank?: number;
 }
 
 export interface Preferences {

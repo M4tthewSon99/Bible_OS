@@ -17,6 +17,7 @@ import {
   SurfacePortal,
 } from "@/components/fluid-surfaces";
 import * as scripture from "@/lib/bible-source";
+import { esvSearchClient } from "@/lib/esv-search-client";
 import type {
   Annotation,
   ChapterData,
@@ -218,7 +219,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private notesOpener: HTMLElement | null = null;
   private readonly searchResponses = new Map<
     string,
-    Awaited<ReturnType<typeof scripture.keywordSearch>>
+    SearchResult[]
   >();
   private selectionTimer?: ReturnType<typeof setTimeout>;
   private toastTimer?: ReturnType<typeof setTimeout>;
@@ -278,6 +279,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       this.toastTimer,
     ].forEach((timer) => timer && clearTimeout(timer));
     this.searchAbort?.abort();
+    esvSearchClient.close();
     document.body.classList.remove("search-open");
     document.body.classList.remove("modal-open");
   }
@@ -853,40 +855,33 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   };
 
   private searchCacheKey(query: string): string {
-    return `${this.state.sourceId}:${query.trim().toLowerCase().replace(/\s+/g, " ")}`;
+    return query.trim().toLowerCase().replace(/\s+/g, " ");
   }
 
   private rememberSearchResponse(
     key: string,
-    output: Awaited<ReturnType<typeof scripture.keywordSearch>>,
+    results: SearchResult[],
   ): void {
     this.searchResponses.delete(key);
-    this.searchResponses.set(key, output);
+    this.searchResponses.set(key, results);
     if (this.searchResponses.size > 20) {
       const oldest = this.searchResponses.keys().next().value;
       if (oldest) this.searchResponses.delete(oldest);
     }
   }
 
-  private applySearchOutput(output: Awaited<ReturnType<typeof scripture.keywordSearch>>): void {
-    const results = output.results.map((result) => ({
+  private applySearchOutput(results: SearchResult[], resultsNote = ""): void {
+    const uiResults = results.map((result) => ({
       ...result,
       go: () => this.pickResult(result),
     }));
-    const resultsNote = output.scope === "cache"
-      ? "Showing matches from chapters opened in this session."
-      : output.scope === "partial"
-        ? "Full search is unavailable. Results currently cover chapters opened in this session."
-      : output.scope === "error"
-        ? "Search couldn’t reach the full Bible index."
-        : results.length
-          ? ""
-          : "No exact matches. Try a shorter phrase or a reference like “John 3:16”.";
     this.setState({
       searching: false,
       searchStale: false,
-      results,
-      resultsNote,
+      results: uiResults,
+      resultsNote: resultsNote || (uiResults.length
+        ? ""
+        : "No ESV matches. Try a shorter phrase or a reference like “John 3:16”."),
       resultsOpen: true,
       activeSearchIndex: 0,
     });
@@ -961,13 +956,20 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         if (this.searchToken === token) this.setState({ searching: true });
       }, 120);
       try {
-        const output = await scripture.keywordSearch(trimmed, 8, controller.signal);
+        const results = await esvSearchClient.search(trimmed, 20, controller.signal, (message) => {
+          if (this.searchToken === token) this.setState({ searching: true, resultsNote: message });
+        });
         if (this.searchToken !== token) return;
-        this.rememberSearchResponse(cacheKey, output);
-        this.applySearchOutput(output);
+        this.rememberSearchResponse(cacheKey, results);
+        this.applySearchOutput(results);
       } catch (error) {
         if (controller.signal.aborted || this.searchToken !== token) return;
-        this.applySearchOutput({ results: local, scope: local.length ? "cache" : "error" });
+        this.applySearchOutput(
+          local,
+          local.length
+            ? "Local ESV search is unavailable. Showing matches from ESV chapters opened in this session."
+            : "Local ESV search couldn’t be prepared. Check your connection and retry.",
+        );
       } finally {
         if (this.searchIndicatorTimer) clearTimeout(this.searchIndicatorTimer);
       }
@@ -1072,6 +1074,13 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   private pickResult(result: SearchResult): void {
     this.closeSpotlight();
+    if (this.state.sourceId !== "mdesv") {
+      scripture.setEnglishSource("mdesv");
+      this.setState({ sourceId: "mdesv" }, () => {
+        void this.openAt(result.bookId, result.chapter, { verse: result.verse });
+      });
+      return;
+    }
     void this.openAt(result.bookId, result.chapter, { verse: result.verse });
   }
 
@@ -1813,7 +1822,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                 : referenceHint
                   ? `Reference ready: ${referenceHint.label}`
                   : results.length
-                    ? `${results.length} search results`
+                    ? `${results.length} ESV search results`
                     : resultsNote}
             </p>
 
@@ -1872,10 +1881,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                     >
                       <span className="result-meta">
                         <span>{result.ref}</span>
-                        <span lang="zh">{result.refZh}</span>
                       </span>
                       <span className="result-english">{this.highlightSearchText(result.en)}</span>
-                      <span className="result-chinese" lang="zh">{result.zh}</span>
                     </button>
                   );
                 })}
