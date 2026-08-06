@@ -628,8 +628,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       return;
     }
 
+    /* Toolbar is ~42px tall (34px button + 4px padding top/bottom), so an
+       offset equal to its height would sit flush on the selection with no
+       air between them. The extra 12px is the actual gap above the text. */
     const position = {
-      top: Math.max(64, rectangle.top - 46),
+      top: Math.max(64, rectangle.top - 58),
       left: rectangle.left + rectangle.width / 2,
     };
     if (!startLocation || !endLocation) {

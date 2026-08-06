@@ -1588,48 +1588,75 @@ a:hover {
   border-radius: 6px;
 }
 
+/* A cluster of interactive controls, so it takes the app's *light* material
+   rather than a near-black slab: heavier materials separate structural
+   regions, lighter ones carry buttons. This also floats directly on the
+   reader's cream paper, where the dark chip was the only surface not
+   speaking the rest of the page's material language. */
 .selection-toolbar {
   position: fixed;
   z-index: 95;
   display: flex;
   align-items: center;
-  border-radius: 7px;
-  background: #26241f;
-  box-shadow: 0 12px 28px -14px rgb(0 0 0 / 55%);
+  gap: 2px;
+  padding: 4px;
+  border-radius: 13px;
+  /* Brighter and cooler than the warm paper it floats on: a light surface
+     laid on another light surface has to separate itself, and the page's own
+     --material-heavy is effectively the same value as the paper. */
+  background: rgb(255 255 255 / 94%);
+  box-shadow:
+    0 14px 32px -12px rgb(33 30 25 / 38%),
+    0 3px 8px -3px rgb(33 30 25 / 20%);
   transform: translateX(-50%);
   animation: rise-centered 0.12s ease-out;
 }
 
 .selection-toolbar button {
   display: flex;
+  min-height: 32px;
   align-items: center;
-  gap: 6px;
-  padding: 7px 11px;
+  gap: 7px;
+  padding: 0 10px;
   border: 0;
+  border-radius: 9px;
   background: transparent;
-  color: #f6f5f3;
+  color: var(--ink);
   cursor: pointer;
   font-size: 12.5px;
+  /* Slightly heavier than body weight so the label holds its own over a
+     translucent, moving backdrop. */
+  font-weight: 500;
+}
+
+.selection-toolbar button:hover {
+  background: rgb(231 230 225 / 70%);
 }
 
 .selection-toolbar kbd {
-  padding: 0 3px;
-  border: 1px solid #4b4844;
-  border-radius: 3px;
-  color: #8f8c86;
+  min-width: 17px;
+  padding: 1px 4px;
+  border: 1px solid rgb(49 45 39 / 10%);
+  border-radius: 5px;
+  background: rgb(255 255 255 / 66%);
+  box-shadow: 0 1px 1px rgb(45 41 35 / 6%);
+  color: #8d8981;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 10px;
+  text-align: center;
 }
 
 .toolbar-divider {
   width: 1px;
   align-self: stretch;
-  background: #3d3b37;
+  margin: 4px 2px;
+  background: rgb(48 44 38 / 10%);
 }
 
 .invalid-selection {
   max-width: 250px;
   padding: 7px 12px;
-  color: #c9c6c0;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -2876,7 +2903,8 @@ button:active:not(:disabled) {
   display: contents;
 }
 
-.selection-toolbar,
+/* The toast stays a dark HUD: it is transient, non-interactive status, which
+   is exactly what a heavier material is for. */
 .toast {
   border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 12px;
@@ -2887,11 +2915,22 @@ button:active:not(:disabled) {
 
 .selection-toolbar {
   overflow: hidden;
+  /* Hairline as an inset shadow, not a border, so the rounded clip keeps its
+     full radius instead of insetting a pixel (same reason as .chapter-menu).
+     A small chip reads thinner than the full-size menus, so the blur and
+     shadow stay lighter than --surface-shadow. */
+  box-shadow:
+    inset 0 0 0 1px rgb(52 47 40 / 13%),
+    inset 0 1px 0 rgb(255 255 255 / 90%),
+    0 18px 36px -12px rgb(33 30 25 / 42%),
+    0 5px 12px -5px rgb(33 30 25 / 24%),
+    0 1px 2px rgb(33 30 25 / 8%);
+  backdrop-filter: blur(20px) saturate(180%);
 }
 
 .selection-toolbar button {
-  min-height: 36px;
-  padding: 8px 13px;
+  min-height: 34px;
+  padding: 0 11px;
 }
 
 .toast {
