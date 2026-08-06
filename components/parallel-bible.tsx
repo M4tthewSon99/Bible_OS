@@ -4,11 +4,18 @@ import {
   Component,
   createRef,
   type ChangeEvent,
-  type CSSProperties,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import { motion } from "motion/react";
+import {
+  AnimatePresence,
+  FluidBackdrop,
+  FluidProvider,
+  FluidSurface,
+  SurfacePortal,
+} from "@/components/fluid-surfaces";
 import * as scripture from "@/lib/bible-source";
 import type {
   Annotation,
@@ -83,6 +90,7 @@ interface State {
   preferences: Preferences;
   narrowLanguage: Language;
   narrow: boolean;
+  compact: boolean;
   annotations: Annotation[];
   notesOpen: boolean;
   activeId: string | null;
@@ -154,6 +162,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     },
     narrowLanguage: "en",
     narrow: false,
+    compact: false,
     annotations: [],
     notesOpen: false,
     activeId: null,
@@ -186,6 +195,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private readonly spotlightInputRef = createRef<HTMLInputElement>();
   private readonly searchTriggerRef = createRef<HTMLButtonElement>();
   private readonly spotlightRef = createRef<HTMLDivElement>();
+  private readonly notesTriggerRef = createRef<HTMLButtonElement>();
+  private readonly notesPanelRef = createRef<HTMLDivElement>();
   private readonly navListRef = createRef<HTMLDivElement>();
   private readonly navBookRef = createRef<HTMLDivElement>();
   private anchor: number | null = null;
@@ -204,6 +215,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private searchAbort?: AbortController;
   private searchToken?: symbol;
   private searchOpener: HTMLElement | null = null;
+  private notesOpener: HTMLElement | null = null;
   private readonly searchResponses = new Map<
     string,
     Awaited<ReturnType<typeof scripture.keywordSearch>>
@@ -220,7 +232,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     document.addEventListener("selectionchange", this.onSelectionChange);
     document.addEventListener("mousedown", this.onDocumentMouseDown, true);
 
-    this.setState({ narrow: window.innerWidth < 1100, sourceId: scripture.englishSourceId() });
+    this.setState({
+      narrow: window.innerWidth < 1100,
+      compact: window.innerWidth < 760,
+      sourceId: scripture.englishSourceId(),
+    });
     this.applyCssVariables();
 
     void scripture.ready().then(() => {
@@ -263,10 +279,15 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     ].forEach((timer) => timer && clearTimeout(timer));
     this.searchAbort?.abort();
     document.body.classList.remove("search-open");
+    document.body.classList.remove("modal-open");
   }
 
   componentDidUpdate(): void {
     this.applyCssVariables();
+    document.body.classList.toggle(
+      "modal-open",
+      this.state.spotlightOpen || (this.state.narrow && this.state.notesOpen),
+    );
     if (this.navScrollPending) {
       const list = this.navListRef.current;
       const book = this.navBookRef.current;
@@ -533,7 +554,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   private onResize = (): void => {
     const narrow = window.innerWidth < 1100;
-    if (narrow !== this.state.narrow) this.setState({ narrow });
+    const compact = window.innerWidth < 760;
+    if (narrow !== this.state.narrow || compact !== this.state.compact) {
+      this.setState({ narrow, compact });
+    }
   };
 
   private languages(): Language[] {
@@ -631,6 +655,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   }
 
   private createAnnotation(draft: HighlightDraft, openPanel: boolean): void {
+    if (openPanel && !this.state.notesOpen) {
+      this.notesOpener = document.activeElement as HTMLElement | null;
+    }
     const id = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const now = new Date().toISOString();
     const annotation: HighlightAnnotation = {
@@ -665,7 +692,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }, () => {
       window.getSelection()?.removeAllRanges();
       if (openPanel) {
-        setTimeout(() => document.querySelector<HTMLTextAreaElement>("aside textarea")?.focus(), 60);
+        setTimeout(() => this.notesPanelRef.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus(), 60);
       }
     });
   }
@@ -756,7 +783,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     );
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
-      this.openSpotlight();
+      if (this.state.spotlightOpen) this.closeSpotlight();
+      else this.openSpotlight();
       return;
     }
     if (event.key === "Escape") {
@@ -764,7 +792,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       else if (this.state.selectionToolbar) this.setState({ selectionToolbar: null });
       else if (this.state.menu) this.setState({ menu: null });
       else if (typing) target.blur();
-      else if (this.state.notesOpen) this.setState({ notesOpen: false, activeId: null });
+      else if (this.state.notesOpen) this.closeNotes();
       return;
     }
     if (typing) return;
@@ -798,8 +826,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }
     this.searchOpener = document.activeElement as HTMLElement | null;
     document.body.classList.add("search-open");
-    this.setState({ spotlightOpen: true });
-    setTimeout(() => this.spotlightInputRef.current?.focus(), 30);
+    this.setState({ spotlightOpen: true }, () => {
+      setTimeout(() => this.spotlightInputRef.current?.focus(), 30);
+    });
   };
 
   private closeSpotlight = (): void => {
@@ -993,8 +1022,12 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   };
 
   private onSpotlightKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    this.trapFocus(event, this.spotlightRef.current);
+  };
+
+  private trapFocus(event: ReactKeyboardEvent<HTMLElement>, container: HTMLElement | null): void {
     if (event.key !== "Tab") return;
-    const focusables = this.spotlightRef.current?.querySelectorAll<HTMLElement>(
+    const focusables = container?.querySelectorAll<HTMLElement>(
       'input, button:not([tabindex="-1"]):not([disabled])',
     );
     if (!focusables?.length) return;
@@ -1007,6 +1040,34 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       event.preventDefault();
       first.focus();
     }
+  }
+
+  private onNotesKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (this.state.narrow) this.trapFocus(event, this.notesPanelRef.current);
+  };
+
+  private openNotes = (activeId: string | null = this.state.activeId): void => {
+    if (!this.state.notesOpen) this.notesOpener = document.activeElement as HTMLElement | null;
+    this.setState({ notesOpen: true, activeId }, () => {
+      if (this.state.narrow) {
+        setTimeout(() => this.notesPanelRef.current?.querySelector<HTMLElement>("button")?.focus(), 30);
+      }
+    });
+  };
+
+  private closeNotes = (): void => {
+    const opener = this.notesOpener;
+    this.setState({ notesOpen: false, activeId: null }, () => {
+      setTimeout(() => {
+        const target = opener?.isConnected ? opener : this.notesTriggerRef.current;
+        target?.focus();
+      }, 0);
+    });
+  };
+
+  private toggleNotes = (): void => {
+    if (this.state.notesOpen) this.closeNotes();
+    else this.openNotes();
   };
 
   private pickResult(result: SearchResult): void {
@@ -1222,7 +1283,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   }
 
   private openAnnotation = (id: string): void => {
-    this.setState({ notesOpen: true, activeId: id, editorMode: "write" });
+    this.setState({ editorMode: "write" }, () => this.openNotes(id));
   };
 
   private focusAnnotation(annotation: HighlightAnnotation): void {
@@ -1288,8 +1349,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   };
 
   private renderChapterPicker(currentLabel: string, currentLabelZh: string): ReactNode {
-    const { current, menu, navOpenBooks, navTestament } = this.state;
+    const { compact, current, menu, narrow, narrowLanguage, navOpenBooks, navTestament } = this.state;
     const open = menu === "chapters";
+    const showEnglish = !narrow || narrowLanguage === "en";
+    const showChinese = !narrow || narrowLanguage === "zh";
 
     return (
       <div className="chapter-picker">
@@ -1301,13 +1364,25 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           title="Choose a book and chapter"
           type="button"
         >
-          <span aria-live="polite" className="current-label-en">{currentLabel}</span>
-          <span className="current-label-zh" lang="zh">{currentLabelZh}</span>
-          <span aria-hidden="true" className="chapter-caret">▾</span>
+          {showEnglish && <span aria-live="polite" className="current-label-en">{currentLabel}</span>}
+          {showChinese && <span aria-live="polite" className="current-label-zh" lang="zh">{currentLabelZh}</span>}
         </button>
 
+        <SurfacePortal enabled={compact}>
+        <AnimatePresence>
         {open && (
-          <div aria-label="Choose a book and chapter" className="menu chapter-menu" role="menu">
+          <>
+          {compact && <div aria-hidden="true" className="compact-menu-backdrop" onClick={() => this.setState({ menu: null })} />}
+          <FluidSurface
+            ariaLabel="Choose a book and chapter"
+            className="menu chapter-menu"
+            edge={compact ? "bottom" : "popover"}
+            key="chapter-menu"
+            onClick={(event) => event.stopPropagation()}
+            onDismiss={() => this.setState({ menu: null })}
+            role="menu"
+            showHandle={compact}
+          >
             <div aria-label="Testament" className="testament-tabs" role="tablist">
               {([["old", "Old Testament"], ["new", "New Testament"]] as [Testament, string][]).map(
                 ([testament, label]) => (
@@ -1339,8 +1414,32 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                       <span>{book.name}</span>
                       <span className="book-zh" lang="zh">{book.zh}</span>
                     </button>
-                    <div className={expanded ? "chapter-grid-wrap open" : "chapter-grid-wrap"} inert={!expanded}>
-                      <div className="chapter-grid-clip">
+                    <AnimatePresence initial={false}>
+                    {expanded && (
+                      <motion.div
+                        animate={{
+                          height: "auto",
+                          opacity: 1,
+                          pointerEvents: "auto",
+                          transition: {
+                            height: { duration: 0.24, ease: [0.2, 0.8, 0.2, 1] },
+                            opacity: { duration: 0.14, ease: [0.2, 0.8, 0.2, 1] },
+                          },
+                        }}
+                        className="chapter-grid-wrap"
+                        exit={{
+                          height: 0,
+                          opacity: 0,
+                          pointerEvents: "none",
+                          transition: {
+                            // Fade the complete grid first; collapsing the now-invisible
+                            // surface afterwards avoids visibly clipping individual rows.
+                            opacity: { duration: 0.1, ease: [0.2, 0.8, 0.2, 1] },
+                            height: { delay: 0.08, duration: 0.2, ease: [0.2, 0.8, 0.2, 1] },
+                          },
+                        }}
+                        initial={{ height: 0, opacity: 0 }}
+                      >
                         <div className="chapter-grid">
                           {Array.from({ length: book.chapters }, (_, index) => index + 1).map((chapter) => {
                             const here = current?.bookId === book.id && current.chapter === chapter;
@@ -1358,14 +1457,36 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                             );
                           })}
                         </div>
-                      </div>
-                    </div>
+                      </motion.div>
+                    )}
+                    </AnimatePresence>
                   </div>
                 );
               })}
             </div>
-          </div>
+          </FluidSurface>
+          </>
         )}
+        </AnimatePresence>
+        </SurfacePortal>
+      </div>
+    );
+  }
+
+  private renderTranslationSwitch(): ReactNode {
+    return (
+      <div aria-label="Translation" className="segmented translation-switch" role="group">
+        {(["en", "zh"] as const).map((language) => (
+          <button
+            aria-pressed={this.state.narrowLanguage === language}
+            className={this.state.narrowLanguage === language ? "active" : ""}
+            key={language}
+            onClick={() => this.setState({ narrowLanguage: language })}
+            type="button"
+          >
+            {language === "en" ? "English" : "中文"}
+          </button>
+        ))}
       </div>
     );
   }
@@ -1378,11 +1499,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const {
       activeSearchIndex,
       annotations,
+      compact,
       keyDraft,
       keyField,
       menu,
       narrow,
-      narrowLanguage,
       notesOpen,
       preferences,
       query,
@@ -1407,7 +1528,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
     return (
       <>
-        <header className="app-header">
+        <header
+          className="app-header"
+          inert={spotlightOpen || (narrow && notesOpen) ? true : undefined}
+        >
         <div className="header-grid">
           <div className="brand-block">
             <a
@@ -1425,36 +1549,21 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           {this.renderChapterPicker(currentLabel, currentLabelZh)}
 
           <div className="header-actions">
-            {narrow && (
-              <div aria-label="Translation" className="segmented" role="group">
-                {(["en", "zh"] as const).map((language) => (
-                  <button
-                    aria-pressed={narrowLanguage === language}
-                    className={narrowLanguage === language ? "active" : ""}
-                    key={language}
-                    onClick={() => this.setState({ narrowLanguage: language })}
-                    type="button"
-                  >
-                    {language === "en" ? "English" : "中文"}
-                  </button>
-                ))}
-              </div>
-            )}
+            {narrow && !compact && this.renderTranslationSwitch()}
 
             <button
               aria-haspopup="dialog"
               aria-label="Search passages and keywords"
-              className="search-trigger"
+              className="icon-button search-trigger"
               onClick={this.openSpotlight}
               ref={this.searchTriggerRef}
+              title="Search (⌘K)"
               type="button"
             >
-              <svg aria-hidden="true" fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" viewBox="0 0 24 24" width="14">
+              <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" viewBox="0 0 24 24" width="15">
                 <circle cx="11" cy="11" r="6.5" />
                 <path d="m16 16 4 4" />
               </svg>
-              <span>Search</span>
-              <kbd>⌘ K</kbd>
             </button>
 
             <div className="menu-wrap">
@@ -1471,10 +1580,24 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                   <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                 </svg>
               </button>
+              <SurfacePortal enabled={compact}>
+              <AnimatePresence>
               {menu === "settings" && (
-                <div aria-label="Display settings" className="menu settings-menu" role="menu">
-                  {!narrow && (
-                    <div className="settings-section">
+                <>
+                {compact && <div aria-hidden="true" className="compact-menu-backdrop" onClick={() => this.setState({ menu: null })} />}
+                <FluidSurface
+                  ariaLabel="Display settings"
+                  className="menu settings-menu"
+                  edge={compact ? "bottom" : "popover"}
+                  key="settings-menu"
+                  onClick={(event) => event.stopPropagation()}
+                  onDismiss={() => this.setState({ menu: null })}
+                  role="menu"
+                  showHandle={compact}
+                >
+                  <div className="settings-section">
+                    {!narrow && (
+                      <>
                       <p className="menu-eyebrow">Language display</p>
                       {([
                         ["both", "Both, side by side"],
@@ -1492,7 +1615,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                           {label}<span>{preferences.langMode === mode ? "●" : ""}</span>
                         </button>
                       ))}
-                      <div className="source-section">
+                      </>
+                    )}
+                      <div className={`source-section${narrow ? " first" : ""}`}>
                         <p className="menu-eyebrow">English source</p>
                         {sources.map((source) => (
                           <button
@@ -1556,7 +1681,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                         )}
                       </div>
                     </div>
-                  )}
                   <div className="settings-section">
                     <p className="menu-eyebrow">Text size</p>
                     <div className="size-control">
@@ -1607,15 +1731,19 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                       />
                     </label>
                   </div>
-                </div>
+                </FluidSurface>
+                </>
               )}
+              </AnimatePresence>
+              </SurfacePortal>
             </div>
 
             <button
               aria-expanded={notesOpen}
               aria-label="Notes"
               className="icon-button notes-button"
-              onClick={() => this.setState({ notesOpen: !notesOpen, activeId: notesOpen ? null : this.state.activeId })}
+              onClick={this.toggleNotes}
+              ref={this.notesTriggerRef}
               type="button"
             >
               <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24" width="15">
@@ -1628,18 +1756,25 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             </button>
           </div>
         </div>
+        {narrow && compact && <div className="translation-row">{this.renderTranslationSwitch()}</div>}
       </header>
 
+      <SurfacePortal>
+      <AnimatePresence>
       {spotlightOpen && (
-        <div className="spotlight-backdrop" onClick={this.closeSpotlight}>
-          <div
-            aria-label="Search"
-            aria-modal="true"
+        <FluidBackdrop className="spotlight-backdrop" onDismiss={this.closeSpotlight}>
+          <FluidSurface
+            ariaLabel="Search"
+            ariaModal
             className="spotlight"
+            edge={compact ? "bottom" : "center"}
+            key="search-surface"
             onClick={(event) => event.stopPropagation()}
+            onDismiss={this.closeSpotlight}
             onKeyDown={this.onSpotlightKeyDown}
             ref={this.spotlightRef}
             role="dialog"
+            showHandle={compact}
           >
             <div className="spotlight-head">
               <form className="spotlight-form" onSubmit={this.handleSearchSubmit} role="search">
@@ -1664,16 +1799,12 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                 />
                 {query && (
                   <button aria-label="Clear search" className="search-clear" onClick={this.clearSearch} type="button">
-                    ×
+                    <svg aria-hidden="true" fill="none" height="13" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" viewBox="0 0 24 24" width="13">
+                      <path d="m7.5 7.5 9 9m0-9-9 9" />
+                    </svg>
                   </button>
                 )}
               </form>
-              <button aria-label="Close search" className="search-close" onClick={this.closeSpotlight} type="button">
-                <span aria-hidden="true">Esc</span>
-                <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" viewBox="0 0 24 24" width="16">
-                  <path d="M6 6l12 12M18 6 6 18" />
-                </svg>
-              </button>
             </div>
 
             <p aria-live="polite" className="sr-only" role="status">
@@ -1688,23 +1819,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
             {!query && (
               <div className="search-welcome">
-                <p className="search-welcome-title">Find a passage or remembered phrase.</p>
-                <p className="search-welcome-copy">Search in English. Results include the parallel Chinese text.</p>
-                <div aria-label="Search examples" className="search-examples">
-                  {["John 3:16", "living water"].map((example) => (
-                    <button
-                      key={example}
-                      onClick={() => {
-                        this.setState({ query: example });
-                        this.runSearch(example);
-                      }}
-                      type="button"
-                    >
-                      <span>{example.includes(":") ? "Passage" : "Keyword"}</span>
-                      {example}
-                    </button>
-                  ))}
-                </div>
                 <p className="search-shortcuts"><kbd>↑</kbd><kbd>↓</kbd> to move <span /> <kbd>↵</kbd> to open</p>
               </div>
             )}
@@ -1780,9 +1894,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                 )}
               </div>
             )}
-          </div>
-        </div>
+          </FluidSurface>
+        </FluidBackdrop>
       )}
+      </AnimatePresence>
+      </SurfacePortal>
       </>
     );
   }
@@ -1918,15 +2034,28 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       )
       : null;
     const chapterAnnotations = currentKey ? this.annotationsForChapter(currentKey) : [];
-    const panelStyle = narrow ? { "--notes-mode": "fixed" } as CSSProperties : undefined;
 
-    return (
-      <aside aria-label="Notes" className="notes-panel" style={panelStyle}>
+    const panel = (
+      <FluidSurface
+        ariaLabel="Notes"
+        ariaModal={narrow}
+        className="notes-panel"
+        draggable={narrow}
+        edge="right"
+        expandWidth={narrow ? undefined : 392}
+        key="notes-panel"
+        onClick={(event) => event.stopPropagation()}
+        onDismiss={this.closeNotes}
+        onKeyDown={this.onNotesKeyDown}
+        ref={this.notesPanelRef}
+        role={narrow ? "dialog" : "complementary"}
+        showHandle={narrow}
+      >
         <div className="notes-header">
           <span>Notes · {currentLabel}</span>
           <button
             aria-label="Close notes"
-            onClick={() => this.setState({ notesOpen: false, activeId: null })}
+            onClick={this.closeNotes}
             type="button"
           >×</button>
         </div>
@@ -2031,12 +2160,18 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           <button onClick={this.exportBackup} type="button">Export backup</button>
           <button onClick={() => this.fileRef.current?.click()} type="button">Import</button>
         </div>
-      </aside>
+      </FluidSurface>
     );
+
+    return narrow ? (
+      <FluidBackdrop className="notes-backdrop" onDismiss={this.closeNotes}>
+        {panel}
+      </FluidBackdrop>
+    ) : panel;
   }
 
   render(): ReactNode {
-    const { chapters, current, selectionToolbar, sourceId, toast } = this.state;
+    const { chapters, current, narrow, notesOpen, selectionToolbar, sourceId, spotlightOpen, toast } = this.state;
     const languages = this.languages();
     const showEnglish = languages.includes("en");
     const showChinese = languages.includes("zh");
@@ -2047,10 +2182,19 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const currentLabelZh = current ? scripture.refLabelZh(current.bookId, current.chapter) : "载入中";
 
     return (
+      <FluidProvider>
       <div className="app-shell">
         {this.renderHeader(currentLabel, currentLabelZh, sourceId)}
-        <div className="reader-with-notes">
-          <main className="reader">
+        <div
+          aria-hidden={spotlightOpen ? true : undefined}
+          className="reader-with-notes"
+          inert={spotlightOpen ? true : undefined}
+        >
+          <main
+            aria-hidden={narrow && notesOpen ? true : undefined}
+            className="reader"
+            inert={narrow && notesOpen ? true : undefined}
+          >
             <div className="reader-inner">
               <div className="translation-labels">
                 {showEnglish && <span>{englishLabel}</span>}
@@ -2078,7 +2222,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
               )}
             </div>
           </main>
-          {this.renderNotes(currentLabel, englishLabel)}
+          <AnimatePresence>{this.renderNotes(currentLabel, englishLabel)}</AnimatePresence>
         </div>
 
         {selectionToolbar && (
@@ -2141,6 +2285,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           type="file"
         />
       </div>
+      </FluidProvider>
     );
   }
 }
