@@ -70,6 +70,8 @@ export function DevotionPanel({
       className="notes-panel devotion-panel"
       draggable={narrow}
       edge="right"
+      /* On desktop this is intentionally the same width transition as Notes:
+         the reader and its companion rail trade space as one physical action. */
       expandWidth={narrow ? undefined : width}
       key="devotion-panel"
       onClick={(event) => event.stopPropagation()}

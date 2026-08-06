@@ -121,6 +121,9 @@ interface State {
   menu: "settings" | "chapters" | null;
   devotions: DevotionStore;
   devotionOpen: boolean;
+  /* The rail stays in the flex layout until its exit spring settles. Without
+     this, closing removes the panel's slot before its visual exit can finish. */
+  devotionRailActive: boolean;
   devotionCalendarOpen: boolean;
   devotionDate: string;
   devotionMonth: string;
@@ -201,6 +204,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     menu: null,
     devotions: {},
     devotionOpen: false,
+    devotionRailActive: false,
     devotionCalendarOpen: true,
     devotionDate: todayKey(),
     devotionMonth: monthKey(todayKey()),
@@ -376,6 +380,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     root.style.setProperty("--os-cols", languages.length === 2 ? "1fr 1fr" : "minmax(0, 44rem)");
     root.style.setProperty("--os-gap", languages.length === 2 ? "66px" : "0px");
     root.style.setProperty("--size-pct", `${Math.round((sizeIndex < 0 ? 3 : sizeIndex) / (SIZES.length - 1) * 100)}%`);
+    root.style.setProperty("--panel-width", `${preferences.panelWidth}px`);
   }
 
   private readJson<T>(key: string): T | null {
@@ -637,7 +642,13 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const narrow = window.innerWidth < 1100;
     const compact = window.innerWidth < 760;
     if (narrow !== this.state.narrow || compact !== this.state.compact) {
-      this.setState({ narrow, compact });
+      this.setState((state) => ({
+        narrow,
+        compact,
+        // A narrow panel is a modal sheet, not a desktop rail. It does not
+        // need to retain a desktop layout slot when the viewport changes.
+        devotionRailActive: narrow ? false : state.devotionRailActive,
+      }));
     }
   };
 
@@ -868,6 +879,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     if (event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "i") {
       event.preventDefault();
       this.toggleChapterPicker();
+      return;
+    }
+    if (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.code === "Backslash") {
+      event.preventDefault();
+      this.toggleDevotion();
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -1217,6 +1233,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     // focus to the notes trigger and would fight the arriving panel.
     this.setState((state) => ({
       devotionOpen: true,
+      devotionRailActive: !state.narrow,
       notesOpen: false,
       activeId: null,
       devotionCalendarOpen: true,
@@ -1235,6 +1252,15 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         restoreFocus(opener?.isConnected ? opener : this.devotionTriggerRef.current);
       }, 0);
     });
+  };
+
+  private finishDevotionExit = (): void => {
+    // AnimatePresence can cancel an exit when the user reopens the panel.
+    // Re-checking state preserves that interruption instead of collapsing the
+    // reader's rail underneath a re-entering surface.
+    if (!this.state.devotionOpen && this.state.devotionRailActive) {
+      this.setState({ devotionRailActive: false });
+    }
   };
 
   private toggleDevotion = (): void => {
@@ -2250,8 +2276,22 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   }
 
   render(): ReactNode {
-    const { chapters, compact, current, devotionOpen, menu, narrow, notesOpen, selectionToolbar, sourceId, spotlightOpen, toast } = this.state;
+    const {
+      chapters,
+      compact,
+      current,
+      devotionOpen,
+      devotionRailActive,
+      menu,
+      narrow,
+      notesOpen,
+      selectionToolbar,
+      sourceId,
+      spotlightOpen,
+      toast,
+    } = this.state;
     const compactPickerOpen = compact && menu === "chapters";
+    const devotionRailVisible = !narrow && (devotionOpen || devotionRailActive);
     const languages = this.languages();
     const showEnglish = languages.includes("en");
     const showChinese = languages.includes("zh");
@@ -2263,66 +2303,68 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
     return (
       <FluidProvider>
-      <div className="app-shell">
-        {this.renderHeader(currentLabel, currentLabelZh, sourceId)}
-        <div
-          aria-hidden={spotlightOpen || compactPickerOpen ? true : undefined}
-          className="reader-with-notes"
-          inert={spotlightOpen || compactPickerOpen ? true : undefined}
-        >
-          <main
-            aria-hidden={narrow && (notesOpen || devotionOpen) ? true : undefined}
-            className={`reader${this.state.atCanonEnd ? " canon-end" : ""}`}
-            inert={narrow && (notesOpen || devotionOpen) ? true : undefined}
+      <div className={`app-shell${devotionRailVisible ? " devotion-rail-active" : ""}`}>
+        <div className="reader-workspace">
+          {this.renderHeader(currentLabel, currentLabelZh, sourceId)}
+          <div
+            aria-hidden={spotlightOpen || compactPickerOpen ? true : undefined}
+            className="reader-with-notes"
+            inert={spotlightOpen || compactPickerOpen ? true : undefined}
           >
-            {/* Sits outside .reader-inner so its sticky background spans the
-                reader column exactly. Inside, it needed a 100vw bleed to reach
-                the edges, which also carried it across the side panel. */}
-            <div className="translation-labels">
-              <div className="translation-labels-inner">
-                {showEnglish && <span>{englishLabel}</span>}
-                {showChinese && <span lang="zh">和合本</span>}
+            <main
+              aria-hidden={narrow && (notesOpen || devotionOpen) ? true : undefined}
+              className={`reader${this.state.atCanonEnd ? " canon-end" : ""}`}
+              inert={narrow && (notesOpen || devotionOpen) ? true : undefined}
+            >
+              {/* Sits outside .reader-inner so its sticky background spans the
+                  reader column exactly. Inside, it needed a 100vw bleed to reach
+                  the edges, which also carried it across the side panel. */}
+              <div className="translation-labels">
+                <div className="translation-labels-inner">
+                  {showEnglish && <span>{englishLabel}</span>}
+                  {showChinese && <span lang="zh">和合本</span>}
+                </div>
               </div>
-            </div>
-            <div className="reader-inner">
-              {this.state.atCanonStart && <p className="canon-edge">Beginning of the canon</p>}
-              {chapters.map((chapter, index) =>
-                this.renderChapter(chapter, index === 0, showEnglish, showChinese),
-              )}
-              {this.state.loadingMore && <p className="canon-edge loading">Loading the next chapter</p>}
-              {this.state.atCanonEnd && <p className="canon-edge">End of the canon</p>}
-              {!esvStatus.ok && <p className="source-notice" role="status">{esvStatus.message}</p>}
-            </div>
-          </main>
-          <AnimatePresence>{this.renderNotes(currentLabel, englishLabel)}</AnimatePresence>
-          <AnimatePresence>
-            {devotionOpen && (
-              <DevotionPanel
-                calendarOpen={this.state.devotionCalendarOpen}
-                date={this.state.devotionDate}
-                entry={this.devotionEntry(this.state.devotionDate)}
-                hasEntry={(dateKey) => hasContent(this.state.devotions[dateKey])}
-                mode={this.state.devotionMode}
-                month={this.state.devotionMonth}
-                monthDirection={this.state.devotionMonthDir}
-                narrow={narrow}
-                onAnswerChange={this.setDevotionAnswer}
-                onClear={this.clearDevotionEntry}
-                onClose={this.closeDevotion}
-                onKeyDown={this.onDevotionKeyDown}
-                onModeChange={(devotionMode) => this.setState({ devotionMode })}
-                onPickDate={this.pickDevotionDate}
-                onStepMonth={this.stepDevotionMonth}
-                onToggleCalendar={this.toggleDevotionCalendar}
-                panelRef={this.devotionPanelRef}
-                resizer={this.renderPanelResizer()}
-                saveState={this.state.devotionSaveState}
-                transitionOverride={this.state.resizingPanel ? { duration: 0 } : undefined}
-                width={this.state.preferences.panelWidth}
-              />
-            )}
-          </AnimatePresence>
+              <div className="reader-inner">
+                {this.state.atCanonStart && <p className="canon-edge">Beginning of the canon</p>}
+                {chapters.map((chapter, index) =>
+                  this.renderChapter(chapter, index === 0, showEnglish, showChinese),
+                )}
+                {this.state.loadingMore && <p className="canon-edge loading">Loading the next chapter</p>}
+                {this.state.atCanonEnd && <p className="canon-edge">End of the canon</p>}
+                {!esvStatus.ok && <p className="source-notice" role="status">{esvStatus.message}</p>}
+              </div>
+            </main>
+            <AnimatePresence>{this.renderNotes(currentLabel, englishLabel)}</AnimatePresence>
+          </div>
         </div>
+        <AnimatePresence onExitComplete={this.finishDevotionExit}>
+          {devotionOpen && (
+            <DevotionPanel
+              calendarOpen={this.state.devotionCalendarOpen}
+              date={this.state.devotionDate}
+              entry={this.devotionEntry(this.state.devotionDate)}
+              hasEntry={(dateKey) => hasContent(this.state.devotions[dateKey])}
+              mode={this.state.devotionMode}
+              month={this.state.devotionMonth}
+              monthDirection={this.state.devotionMonthDir}
+              narrow={narrow}
+              onAnswerChange={this.setDevotionAnswer}
+              onClear={this.clearDevotionEntry}
+              onClose={this.closeDevotion}
+              onKeyDown={this.onDevotionKeyDown}
+              onModeChange={(devotionMode) => this.setState({ devotionMode })}
+              onPickDate={this.pickDevotionDate}
+              onStepMonth={this.stepDevotionMonth}
+              onToggleCalendar={this.toggleDevotionCalendar}
+              panelRef={this.devotionPanelRef}
+              resizer={this.renderPanelResizer()}
+              saveState={this.state.devotionSaveState}
+              transitionOverride={this.state.resizingPanel ? { duration: 0 } : undefined}
+              width={this.state.preferences.panelWidth}
+            />
+          )}
+        </AnimatePresence>
 
         {selectionToolbar && (
           <div

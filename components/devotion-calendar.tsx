@@ -132,10 +132,11 @@ export function DevotionTrigger({
     <button
       aria-expanded={open}
       aria-label="Daily devotion"
+      aria-keyshortcuts="Meta+Backslash"
       className="icon-button devotion-button"
       onClick={onPress}
       ref={triggerRef}
-      title="Daily devotion"
+      title="Daily devotion (⌘\)"
       type="button"
     >
       <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24" width="15">

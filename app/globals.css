@@ -2753,6 +2753,30 @@ button:active:not(:disabled) {
   animation: none;
 }
 
+/* Devotion is a screen-level companion to the reader, rather than a second
+   reader sub-panel. Keeping it in the outer layout lets its rail begin at the
+   viewport's top edge while Notes remains attached to the reading workspace. */
+@media (min-width: 1100px) {
+  .app-shell.devotion-rail-active {
+    display: flex;
+    min-height: 100dvh;
+    align-items: start;
+  }
+
+  .app-shell.devotion-rail-active > .reader-workspace {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .app-shell.devotion-rail-active > .devotion-panel {
+    position: sticky;
+    top: 0;
+    flex: 0 0 auto;
+    align-self: start;
+    height: 100dvh;
+  }
+}
+
 .spotlight {
   width: var(--header-popover-width);
   max-height: min(760px, calc(100dvh - var(--overlay-top) - 32px));
