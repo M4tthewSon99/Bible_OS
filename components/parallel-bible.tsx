@@ -229,6 +229,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     window.addEventListener("scroll", this.onScroll, { passive: true });
     window.addEventListener("resize", this.onResize);
     window.addEventListener("keydown", this.onKey);
+    window.addEventListener("wheel", this.onWheel, { passive: true });
     window.addEventListener("hashchange", this.onHash);
     document.addEventListener("selectionchange", this.onSelectionChange);
     document.addEventListener("mousedown", this.onDocumentMouseDown, true);
@@ -264,6 +265,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     window.removeEventListener("scroll", this.onScroll);
     window.removeEventListener("resize", this.onResize);
     window.removeEventListener("keydown", this.onKey);
+    window.removeEventListener("wheel", this.onWheel);
     window.removeEventListener("hashchange", this.onHash);
     document.removeEventListener("selectionchange", this.onSelectionChange);
     document.removeEventListener("mousedown", this.onDocumentMouseDown, true);
@@ -436,7 +438,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private extend = async (direction: "next" | "prev"): Promise<void> => {
     if (this.busy === direction) return;
     const { chapters } = this.state;
-    if (!chapters.length || chapters.length >= MAX_LOADED) return;
+    if (!chapters.length) return;
     const edge = direction === "next" ? chapters.at(-1) : chapters[0];
     if (!edge || edge.status !== "ready") return;
 
@@ -516,6 +518,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       this.lastY = y;
       this.trackPosition();
     });
+  };
+
+  private onWheel = (event: WheelEvent): void => {
+    if (event.deltaY < 0 && window.scrollY < 420) void this.extend("prev");
   };
 
   private trackPosition(): void {
@@ -2199,7 +2205,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         >
           <main
             aria-hidden={narrow && notesOpen ? true : undefined}
-            className="reader"
+            className={`reader${this.state.atCanonEnd ? " canon-end" : ""}`}
             inert={narrow && notesOpen ? true : undefined}
           >
             <div className="reader-inner">
@@ -2214,19 +2220,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
               {this.state.loadingMore && <p className="canon-edge loading">Loading the next chapter</p>}
               {this.state.atCanonEnd && <p className="canon-edge">End of the canon</p>}
               {!esvStatus.ok && <p className="source-notice" role="status">{esvStatus.message}</p>}
-              {usingEsv ? (
-                <p className="copyright">
-                  Scripture quotations marked “ESV” are from the ESV® Bible (The Holy Bible, English Standard
-                  Version®), © 2001 by Crossway, a publishing ministry of Good News Publishers. Used by permission.
-                  All rights reserved. Chinese text is the Chinese Union Version (和合本), public domain.{" "}
-                  <a href="https://www.esv.org/" rel="noopener noreferrer" target="_blank">www.esv.org</a>
-                </p>
-              ) : (
-                <p className="copyright">
-                  English: World English Bible, public domain. Chinese: Chinese Union Version (和合本), public
-                  domain. Switch the English source in the language menu to read the ESV.
-                </p>
-              )}
             </div>
           </main>
           <AnimatePresence>{this.renderNotes(currentLabel, englishLabel)}</AnimatePresence>
