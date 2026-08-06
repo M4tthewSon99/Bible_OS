@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
-import { motion } from "motion/react";
+import { ChapterPicker } from "@/components/chapter-picker";
 import {
   AnimatePresence,
   FluidBackdrop,
@@ -29,7 +29,6 @@ import type {
   ParagraphBlock,
   Preferences,
   SearchResult,
-  Testament,
 } from "@/lib/types";
 
 const STORAGE = {
@@ -98,8 +97,6 @@ interface State {
   editorMode: "write" | "preview";
   saveState: string;
   menu: "settings" | "chapters" | null;
-  navTestament: Testament;
-  navOpenBooks: string[];
   sourceId: EnglishSourceId;
   keyField: boolean;
   keyDraft: string;
@@ -170,8 +167,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     editorMode: "write",
     saveState: "",
     menu: null,
-    navTestament: "new",
-    navOpenBooks: [],
     sourceId: "web",
     keyField: false,
     keyDraft: "",
@@ -198,11 +193,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private readonly spotlightRef = createRef<HTMLDivElement>();
   private readonly notesTriggerRef = createRef<HTMLButtonElement>();
   private readonly notesPanelRef = createRef<HTMLDivElement>();
-  private readonly navListRef = createRef<HTMLDivElement>();
-  private readonly navBookRef = createRef<HTMLDivElement>();
   private anchor: number | null = null;
   private busy: "next" | "prev" | null = null;
-  private navScrollPending = false;
   private clearSave?: ReturnType<typeof setTimeout>;
   private lastY: number | null = null;
   private pendingScroll: { selector: string; at: number } | null = null;
@@ -290,16 +282,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     this.applyCssVariables();
     document.body.classList.toggle(
       "modal-open",
-      this.state.spotlightOpen || (this.state.narrow && this.state.notesOpen),
+      this.state.spotlightOpen
+        || (this.state.narrow && this.state.notesOpen)
+        || (this.state.compact && this.state.menu === "chapters"),
     );
-    if (this.navScrollPending) {
-      const list = this.navListRef.current;
-      const book = this.navBookRef.current;
-      if (list && book) {
-        this.navScrollPending = false;
-        list.scrollTop = Math.max(0, book.offsetTop - list.clientHeight / 3);
-      }
-    }
     if (this.anchor !== null) {
       const delta = document.documentElement.scrollHeight - this.anchor;
       this.anchor = null;
@@ -824,6 +810,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private onDocumentMouseDown = (event: MouseEvent): void => {
     if (!this.state.menu && !this.state.resultsOpen) return;
     const target = event.target as Element | null;
+    if (target?.closest?.(".chapter-menu")) return;
     if (!target?.closest?.("header")) this.setState({ menu: null, resultsOpen: false });
   };
 
@@ -834,7 +821,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }
     this.searchOpener = document.activeElement as HTMLElement | null;
     document.body.classList.add("search-open");
-    this.setState({ spotlightOpen: true }, () => {
+    this.setState({ menu: null, resultsOpen: false, spotlightOpen: true }, () => {
       setTimeout(() => this.spotlightInputRef.current?.focus(), 30);
     });
   };
@@ -1334,157 +1321,27 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }
   };
 
-  private toggleChapterPicker = (): void => {
-    if (this.state.menu === "chapters") {
-      this.navScrollPending = false;
-      this.setState({ menu: null });
-      return;
-    }
-    const bookId = this.state.current?.bookId || "MAT";
-    this.navScrollPending = true;
-    this.setState({
-      menu: "chapters",
-      navTestament: scripture.bookTestament(bookId),
-      navOpenBooks: [bookId],
-    });
-  };
-
   private pickChapter = (bookId: string, chapter: number): void => {
-    this.navScrollPending = false;
-    this.setState({ menu: null, navOpenBooks: [bookId] });
+    this.setState({ menu: null });
     void this.openAt(bookId, chapter);
   };
 
-  private toggleNavBook = (bookId: string): void => {
-    this.setState((state) => ({
-      navOpenBooks: state.navOpenBooks.includes(bookId)
-        ? state.navOpenBooks.filter((id) => id !== bookId)
-        : [...state.navOpenBooks, bookId],
-    }));
-  };
-
   private renderChapterPicker(currentLabel: string, currentLabelZh: string): ReactNode {
-    const { compact, current, menu, narrow, narrowLanguage, navOpenBooks, navTestament } = this.state;
-    const open = menu === "chapters";
-    const showEnglish = !narrow || narrowLanguage === "en";
-    const showChinese = !narrow || narrowLanguage === "zh";
-
+    const { compact, current, menu, narrow, narrowLanguage } = this.state;
+    const active = current || { bookId: "MAT", chapter: 1 };
     return (
-      <div className="chapter-picker">
-        <button
-          aria-expanded={open}
-          aria-haspopup="menu"
-          className="current-label"
-          onClick={this.toggleChapterPicker}
-          title="Choose a book and chapter"
-          type="button"
-        >
-          {showEnglish && <span aria-live="polite" className="current-label-en">{currentLabel}</span>}
-          {showChinese && <span aria-live="polite" className="current-label-zh" lang="zh">{currentLabelZh}</span>}
-        </button>
-
-        <SurfacePortal enabled={compact}>
-        <AnimatePresence>
-        {open && (
-          <>
-          {compact && <div aria-hidden="true" className="compact-menu-backdrop" onClick={() => this.setState({ menu: null })} />}
-          <FluidSurface
-            ariaLabel="Choose a book and chapter"
-            className="menu chapter-menu"
-            edge={compact ? "bottom" : "popover"}
-            key="chapter-menu"
-            onClick={(event) => event.stopPropagation()}
-            onDismiss={() => this.setState({ menu: null })}
-            role="menu"
-            showHandle={compact}
-          >
-            <div aria-label="Testament" className="testament-tabs" role="tablist">
-              {([["old", "Old Testament"], ["new", "New Testament"]] as [Testament, string][]).map(
-                ([testament, label]) => (
-                  <button
-                    aria-selected={navTestament === testament}
-                    key={testament}
-                    onClick={() => this.setState({ navTestament: testament })}
-                    role="tab"
-                    type="button"
-                  >
-                    {label}
-                  </button>
-                ),
-              )}
-            </div>
-
-            <div className="book-list" ref={this.navListRef}>
-              {scripture.booksIn(navTestament).map((book) => {
-                const expanded = navOpenBooks.includes(book.id);
-                return (
-                  <div className="book-row" key={book.id} ref={book.id === current?.bookId ? this.navBookRef : undefined}>
-                    <button
-                      aria-expanded={expanded}
-                      aria-label={book.name}
-                      className={expanded ? "book-name open" : "book-name"}
-                      onClick={() => this.toggleNavBook(book.id)}
-                      type="button"
-                    >
-                      <span>{book.name}</span>
-                      <span className="book-zh" lang="zh">{book.zh}</span>
-                    </button>
-                    <AnimatePresence initial={false}>
-                    {expanded && (
-                      <motion.div
-                        animate={{
-                          height: "auto",
-                          opacity: 1,
-                          pointerEvents: "auto",
-                          transition: {
-                            height: { duration: 0.24, ease: [0.2, 0.8, 0.2, 1] },
-                            opacity: { duration: 0.14, ease: [0.2, 0.8, 0.2, 1] },
-                          },
-                        }}
-                        className="chapter-grid-wrap"
-                        exit={{
-                          height: 0,
-                          opacity: 0,
-                          pointerEvents: "none",
-                          transition: {
-                            // Fade the complete grid first; collapsing the now-invisible
-                            // surface afterwards avoids visibly clipping individual rows.
-                            opacity: { duration: 0.1, ease: [0.2, 0.8, 0.2, 1] },
-                            height: { delay: 0.08, duration: 0.2, ease: [0.2, 0.8, 0.2, 1] },
-                          },
-                        }}
-                        initial={{ height: 0, opacity: 0 }}
-                      >
-                        <div className="chapter-grid">
-                          {Array.from({ length: book.chapters }, (_, index) => index + 1).map((chapter) => {
-                            const here = current?.bookId === book.id && current.chapter === chapter;
-                            return (
-                              <button
-                                aria-current={here ? "page" : undefined}
-                                aria-label={`${book.name} ${chapter}`}
-                                className={here ? "chapter-number current" : "chapter-number"}
-                                key={chapter}
-                                onClick={() => this.pickChapter(book.id, chapter)}
-                                type="button"
-                              >
-                                {chapter}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </motion.div>
-                    )}
-                    </AnimatePresence>
-                  </div>
-                );
-              })}
-            </div>
-          </FluidSurface>
-          </>
-        )}
-        </AnimatePresence>
-        </SurfacePortal>
-      </div>
+      <ChapterPicker
+        compact={compact}
+        currentBookId={active.bookId}
+        currentChapter={active.chapter}
+        currentLabel={currentLabel}
+        currentLabelZh={currentLabelZh}
+        narrow={narrow}
+        narrowLanguage={narrowLanguage}
+        onOpenChange={(open) => this.setState({ menu: open ? "chapters" : null })}
+        onPick={this.pickChapter}
+        open={menu === "chapters"}
+      />
     );
   }
 
@@ -1545,7 +1402,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       <>
         <header
           className="app-header"
-          inert={spotlightOpen || (narrow && notesOpen) ? true : undefined}
+          inert={spotlightOpen || (narrow && notesOpen) || (compact && menu === "chapters") ? true : undefined}
         >
         <div className="header-grid">
           <div className="brand-block">
@@ -2184,7 +2041,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   }
 
   render(): ReactNode {
-    const { chapters, current, narrow, notesOpen, selectionToolbar, sourceId, spotlightOpen, toast } = this.state;
+    const { chapters, compact, current, menu, narrow, notesOpen, selectionToolbar, sourceId, spotlightOpen, toast } = this.state;
+    const compactPickerOpen = compact && menu === "chapters";
     const languages = this.languages();
     const showEnglish = languages.includes("en");
     const showChinese = languages.includes("zh");
@@ -2199,9 +2057,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       <div className="app-shell">
         {this.renderHeader(currentLabel, currentLabelZh, sourceId)}
         <div
-          aria-hidden={spotlightOpen ? true : undefined}
+          aria-hidden={spotlightOpen || compactPickerOpen ? true : undefined}
           className="reader-with-notes"
-          inert={spotlightOpen ? true : undefined}
+          inert={spotlightOpen || compactPickerOpen ? true : undefined}
         >
           <main
             aria-hidden={narrow && notesOpen ? true : undefined}
