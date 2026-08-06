@@ -17,10 +17,22 @@ import {
   SurfacePortal,
 } from "@/components/fluid-surfaces";
 import * as scripture from "@/lib/bible-source";
+import {
+  emptyEntry,
+  hasContent,
+  monthKey,
+  shiftMonth,
+  todayKey,
+} from "@/lib/devotion";
+import { DevotionTrigger } from "@/components/devotion-calendar";
+import { DevotionPanel } from "@/components/devotion-panel";
 import { esvSearchClient } from "@/lib/esv-search-client";
+import { markdown } from "@/lib/markdown";
 import type {
   Annotation,
   ChapterData,
+  DevotionEntry,
+  DevotionStore,
   EnglishSourceId,
   HighlightAnnotation,
   HighlightDraft,
@@ -35,6 +47,7 @@ const STORAGE = {
   preferences: "bibleos.prefs.v1",
   annotations: "bibleos.annotations.v1",
   position: "bibleos.position.v1",
+  devotions: "bibleos.devotions.v1",
 };
 const SIZES = [16, 17, 18, 19, 21, 23, 25];
 const SPACING = [
@@ -82,6 +95,7 @@ interface SelectionToolbar {
 interface Toast {
   message: string;
   undo: boolean;
+  kind?: "devotion";
 }
 
 interface State {
@@ -97,6 +111,14 @@ interface State {
   editorMode: "write" | "preview";
   saveState: string;
   menu: "settings" | "chapters" | null;
+  devotions: DevotionStore;
+  devotionOpen: boolean;
+  devotionCalendarOpen: boolean;
+  devotionDate: string;
+  devotionMonth: string;
+  devotionMonthDir: 1 | -1;
+  devotionMode: "write" | "preview";
+  devotionSaveState: string;
   sourceId: EnglishSourceId;
   keyField: boolean;
   keyDraft: string;
@@ -167,6 +189,14 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     editorMode: "write",
     saveState: "",
     menu: null,
+    devotions: {},
+    devotionOpen: false,
+    devotionCalendarOpen: true,
+    devotionDate: todayKey(),
+    devotionMonth: monthKey(todayKey()),
+    devotionMonthDir: 1,
+    devotionMode: "write",
+    devotionSaveState: "",
     sourceId: "web",
     keyField: false,
     keyDraft: "",
@@ -193,6 +223,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private readonly spotlightRef = createRef<HTMLDivElement>();
   private readonly notesTriggerRef = createRef<HTMLButtonElement>();
   private readonly notesPanelRef = createRef<HTMLDivElement>();
+  private readonly devotionTriggerRef = createRef<HTMLButtonElement>();
+  private readonly devotionPanelRef = createRef<HTMLDivElement>();
   private anchor: number | null = null;
   private busy: "next" | "prev" | null = null;
   private clearSave?: ReturnType<typeof setTimeout>;
@@ -209,6 +241,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private searchToken?: symbol;
   private searchOpener: HTMLElement | null = null;
   private notesOpener: HTMLElement | null = null;
+  private devotionOpener: HTMLElement | null = null;
+  private devotionSaveTimer?: ReturnType<typeof setTimeout>;
+  private clearDevotionSave?: ReturnType<typeof setTimeout>;
+  private pendingDevotionUndo: DevotionEntry | null = null;
   private readonly searchResponses = new Map<
     string,
     SearchResult[]
@@ -237,10 +273,14 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       const preferences = this.readJson<Partial<Preferences>>(STORAGE.preferences);
       const annotations = this.readJson<Annotation[]>(STORAGE.annotations);
       const position = this.readJson<SavedPosition>(STORAGE.position);
+      const devotions = this.readJson<DevotionStore>(STORAGE.devotions);
       this.setState(
         (state) => ({
           preferences: { ...state.preferences, ...(preferences || {}) },
           annotations: Array.isArray(annotations) ? annotations : [],
+          devotions: devotions && typeof devotions === "object" && !Array.isArray(devotions)
+            ? devotions
+            : {},
         }),
         () => {
           this.applyCssVariables();
@@ -264,6 +304,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     if (this.scrollTick !== null) cancelAnimationFrame(this.scrollTick);
     [
       this.clearSave,
+      this.clearDevotionSave,
+      this.devotionSaveTimer,
       this.positionTimer,
       this.saveTimer,
       this.searchTimer,
@@ -284,6 +326,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       "modal-open",
       this.state.spotlightOpen
         || (this.state.narrow && this.state.notesOpen)
+        || (this.state.narrow && this.state.devotionOpen)
         || (this.state.compact && this.state.menu === "chapters"),
     );
     if (this.anchor !== null) {
@@ -787,6 +830,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       else if (this.state.menu) this.setState({ menu: null });
       else if (typing) target.blur();
       else if (this.state.notesOpen) this.closeNotes();
+      else if (this.state.devotionOpen) this.closeDevotion();
       return;
     }
     if (typing) return;
@@ -810,7 +854,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private onDocumentMouseDown = (event: MouseEvent): void => {
     if (!this.state.menu && !this.state.resultsOpen) return;
     const target = event.target as Element | null;
-    if (target?.closest?.(".chapter-menu")) return;
+    // Menus portal to the body on compact, so "inside the header" is not a
+    // reliable test for "inside the menu" — check the surface itself too.
+    if (target?.closest?.(".menu")) return;
     if (!target?.closest?.("header")) this.setState({ menu: null, resultsOpen: false });
   };
 
@@ -1023,7 +1069,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private trapFocus(event: ReactKeyboardEvent<HTMLElement>, container: HTMLElement | null): void {
     if (event.key !== "Tab") return;
     const focusables = container?.querySelectorAll<HTMLElement>(
-      'input, button:not([tabindex="-1"]):not([disabled])',
+      'input, textarea, button:not([tabindex="-1"]):not([disabled])',
     );
     if (!focusables?.length) return;
     const first = focusables[0];
@@ -1043,7 +1089,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   private openNotes = (activeId: string | null = this.state.activeId): void => {
     if (!this.state.notesOpen) this.notesOpener = document.activeElement as HTMLElement | null;
-    this.setState({ notesOpen: true, activeId }, () => {
+    this.setState({ notesOpen: true, activeId, devotionOpen: false }, () => {
       if (this.state.narrow) {
         setTimeout(() => this.notesPanelRef.current?.querySelector<HTMLElement>("button")?.focus(), 30);
       }
@@ -1063,6 +1109,147 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private toggleNotes = (): void => {
     if (this.state.notesOpen) this.closeNotes();
     else this.openNotes();
+  };
+
+  private onDevotionKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (this.state.narrow) this.trapFocus(event, this.devotionPanelRef.current);
+  };
+
+  private toggleDevotionCalendar = (): void => {
+    this.setState((state) => ({
+      devotionCalendarOpen: !state.devotionCalendarOpen,
+      // Reopening always lands on the month you are already looking at.
+      devotionMonth: state.devotionCalendarOpen ? state.devotionMonth : monthKey(state.devotionDate),
+    }));
+  };
+
+  private stepDevotionMonth = (delta: 1 | -1): void => {
+    this.setState((state) => ({
+      devotionMonth: shiftMonth(state.devotionMonth, delta),
+      devotionMonthDir: delta,
+    }));
+  };
+
+  /** Choosing a day folds the calendar away so the writing gets the room. */
+  private pickDevotionDate = (dateKey: string): void => {
+    this.setState((state) => ({
+      devotionDate: dateKey,
+      devotionCalendarOpen: false,
+      devotionMonth: monthKey(dateKey),
+      devotionSaveState: "",
+      devotions: state.devotions,
+    }));
+  };
+
+  private openDevotion = (): void => {
+    if (!this.state.devotionOpen) {
+      this.devotionOpener = document.activeElement as HTMLElement | null;
+    }
+    // Set notesOpen directly rather than calling closeNotes — that restores
+    // focus to the notes trigger and would fight the arriving panel.
+    this.setState((state) => ({
+      devotionOpen: true,
+      notesOpen: false,
+      activeId: null,
+      devotionCalendarOpen: true,
+      devotionMonth: monthKey(state.devotionDate),
+    }), () => {
+      if (this.state.narrow) {
+        setTimeout(() => this.devotionPanelRef.current?.querySelector<HTMLElement>("button")?.focus(), 30);
+      }
+    });
+  };
+
+  private closeDevotion = (): void => {
+    const opener = this.devotionOpener;
+    this.setState({ devotionOpen: false }, () => {
+      setTimeout(() => {
+        const target = opener?.isConnected ? opener : this.devotionTriggerRef.current;
+        target?.focus();
+      }, 0);
+    });
+  };
+
+  private toggleDevotion = (): void => {
+    if (this.state.devotionOpen) this.closeDevotion();
+    else this.openDevotion();
+  };
+
+  private devotionEntry(dateKey: string): DevotionEntry | undefined {
+    return this.state.devotions[dateKey];
+  }
+
+  private setDevotionAnswer = (promptId: string, value: string): void => {
+    const { current, devotionDate } = this.state;
+    const ref = current ? scripture.refLabel(current.bookId, current.chapter) : null;
+    this.setState((state) => {
+      const existing = state.devotions[devotionDate] || emptyEntry(devotionDate, ref);
+      return {
+        devotions: {
+          ...state.devotions,
+          [devotionDate]: {
+            ...existing,
+            answers: { ...existing.answers, [promptId]: value },
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        devotionSaveState: "Saving…",
+      };
+    });
+    this.scheduleDevotionSave();
+  };
+
+  private scheduleDevotionSave(): void {
+    if (this.devotionSaveTimer) clearTimeout(this.devotionSaveTimer);
+    this.devotionSaveTimer = setTimeout(() => {
+      this.persistDevotions(this.state.devotions);
+      this.setState({ devotionSaveState: "Saved" });
+      if (this.clearDevotionSave) clearTimeout(this.clearDevotionSave);
+      this.clearDevotionSave = setTimeout(() => this.setState({ devotionSaveState: "" }), 2_200);
+    }, 350);
+  }
+
+  /** Blank days are dropped so they never light up the calendar. */
+  private persistDevotions(devotions: DevotionStore): void {
+    const kept: DevotionStore = {};
+    Object.entries(devotions).forEach(([dateKey, entry]) => {
+      if (hasContent(entry)) kept[dateKey] = entry;
+    });
+    this.writeJson(STORAGE.devotions, kept);
+  }
+
+  private clearDevotionEntry = (): void => {
+    const { devotionDate } = this.state;
+    const entry = this.state.devotions[devotionDate];
+    if (!entry) return;
+    this.pendingDevotionUndo = entry;
+    this.setState((state) => {
+      const devotions = { ...state.devotions };
+      delete devotions[devotionDate];
+      this.persistDevotions(devotions);
+      return {
+        devotions,
+        devotionSaveState: "",
+        toast: { message: "Devotion cleared.", undo: true, kind: "devotion" as const },
+      };
+    });
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => this.setState({ toast: null }), 7_000);
+  };
+
+  private undoDevotionClear = (): void => {
+    const entry = this.pendingDevotionUndo;
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    if (!entry) {
+      this.setState({ toast: null });
+      return;
+    }
+    this.pendingDevotionUndo = null;
+    this.setState((state) => {
+      const devotions = { ...state.devotions, [entry.date]: entry };
+      this.persistDevotions(devotions);
+      return { devotions, toast: null };
+    });
   };
 
   private pickResult(result: SearchResult): void {
@@ -1094,75 +1281,14 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     );
   }
 
-  private markdown(source: string): string {
-    const escape = (value: string) => value
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-    const inline = (value: string) => escape(value)
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-      .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-      .replace(/`([^`]+)`/g, "<code>$1</code>");
-    const output: string[] = [];
-    let list: "ul" | "ol" | null = null;
-    const closeList = () => {
-      if (list) output.push(`</${list}>`);
-      list = null;
-    };
-
-    source.replace(/\r/g, "").split("\n").forEach((raw) => {
-      const line = raw.trimEnd();
-      if (!line.trim()) {
-        closeList();
-        return;
-      }
-      let match = line.match(/^(#{1,3})\s+(.*)$/);
-      if (match) {
-        closeList();
-        output.push(`<h${match[1].length}>${inline(match[2])}</h${match[1].length}>`);
-        return;
-      }
-      match = line.match(/^>\s?(.*)$/);
-      if (match) {
-        closeList();
-        output.push(`<blockquote>${inline(match[1])}</blockquote>`);
-        return;
-      }
-      match = line.match(/^[-*+]\s+(.*)$/);
-      if (match) {
-        if (list !== "ul") {
-          closeList();
-          output.push("<ul>");
-          list = "ul";
-        }
-        output.push(`<li>${inline(match[1])}</li>`);
-        return;
-      }
-      match = line.match(/^\d+[.)]\s+(.*)$/);
-      if (match) {
-        if (list !== "ol") {
-          closeList();
-          output.push("<ol>");
-          list = "ol";
-        }
-        output.push(`<li>${inline(match[1])}</li>`);
-        return;
-      }
-      closeList();
-      output.push(`<p>${inline(line)}</p>`);
-    });
-    closeList();
-    return output.join("");
-  }
-
   private exportBackup = (): void => {
     const payload = {
       app: "bible-os",
-      schema: 1,
+      schema: 2,
       exportedAt: new Date().toISOString(),
       prefs: this.state.preferences,
       annotations: this.state.annotations,
+      devotions: this.state.devotions,
       position: this.readJson<SavedPosition>(STORAGE.position),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -1182,13 +1308,19 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       try {
         const data = JSON.parse(String(reader.result)) as {
           annotations?: Annotation[];
+          devotions?: DevotionStore;
           prefs?: Partial<Preferences>;
         };
         const annotations = Array.isArray(data.annotations) ? data.annotations : [];
         const preferences = { ...this.state.preferences, ...(data.prefs || {}) };
+        // Schema 1 backups predate devotions; absent is not empty-on-purpose.
+        const devotions = data.devotions && typeof data.devotions === "object" && !Array.isArray(data.devotions)
+          ? data.devotions
+          : this.state.devotions;
         this.persistAnnotations(annotations);
+        this.persistDevotions(devotions);
         this.writeJson(STORAGE.preferences, preferences);
-        this.setState({ annotations, preferences });
+        this.setState({ annotations, devotions, preferences });
         this.flash(`Backup imported — ${annotations.length} entries.`);
       } catch {
         this.flash("That file could not be read.");
@@ -1372,6 +1504,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       activeSearchIndex,
       annotations,
       compact,
+      devotionOpen,
       keyDraft,
       keyField,
       menu,
@@ -1402,7 +1535,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       <>
         <header
           className="app-header"
-          inert={spotlightOpen || (narrow && notesOpen) || (compact && menu === "chapters") ? true : undefined}
+          inert={spotlightOpen || (narrow && (notesOpen || devotionOpen)) || (compact && menu === "chapters") ? true : undefined}
         >
         <div className="header-grid">
           <div className="brand-block">
@@ -1626,6 +1759,13 @@ export class ParallelBible extends Component<Record<string, never>, State> {
               </svg>
               {highlightCount > 0 && <span>{highlightCount}</span>}
             </button>
+
+            <DevotionTrigger
+              hasEntryToday={hasContent(this.state.devotions[todayKey()])}
+              onPress={this.toggleDevotion}
+              open={devotionOpen}
+              triggerRef={this.devotionTriggerRef}
+            />
           </div>
         </div>
         {narrow && compact && <div className="translation-row">{this.renderTranslationSwitch()}</div>}
@@ -1974,7 +2114,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                 <div
                   className="note-preview"
                   dangerouslySetInnerHTML={{
-                    __html: active.note ? this.markdown(active.note) : '<p class="empty-preview">Nothing to preview yet.</p>',
+                    __html: active.note ? markdown(active.note) : '<p class="empty-preview">Nothing to preview yet.</p>',
                   }}
                 />
               )}
@@ -2041,7 +2181,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   }
 
   render(): ReactNode {
-    const { chapters, compact, current, menu, narrow, notesOpen, selectionToolbar, sourceId, spotlightOpen, toast } = this.state;
+    const { chapters, compact, current, devotionOpen, menu, narrow, notesOpen, selectionToolbar, sourceId, spotlightOpen, toast } = this.state;
     const compactPickerOpen = compact && menu === "chapters";
     const languages = this.languages();
     const showEnglish = languages.includes("en");
@@ -2062,9 +2202,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           inert={spotlightOpen || compactPickerOpen ? true : undefined}
         >
           <main
-            aria-hidden={narrow && notesOpen ? true : undefined}
+            aria-hidden={narrow && (notesOpen || devotionOpen) ? true : undefined}
             className={`reader${this.state.atCanonEnd ? " canon-end" : ""}`}
-            inert={narrow && notesOpen ? true : undefined}
+            inert={narrow && (notesOpen || devotionOpen) ? true : undefined}
           >
             <div className="reader-inner">
               <div className="translation-labels">
@@ -2081,6 +2221,30 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             </div>
           </main>
           <AnimatePresence>{this.renderNotes(currentLabel, englishLabel)}</AnimatePresence>
+          <AnimatePresence>
+            {devotionOpen && (
+              <DevotionPanel
+                calendarOpen={this.state.devotionCalendarOpen}
+                date={this.state.devotionDate}
+                entry={this.devotionEntry(this.state.devotionDate)}
+                hasEntry={(dateKey) => hasContent(this.state.devotions[dateKey])}
+                mode={this.state.devotionMode}
+                month={this.state.devotionMonth}
+                monthDirection={this.state.devotionMonthDir}
+                narrow={narrow}
+                onAnswerChange={this.setDevotionAnswer}
+                onClear={this.clearDevotionEntry}
+                onClose={this.closeDevotion}
+                onKeyDown={this.onDevotionKeyDown}
+                onModeChange={(devotionMode) => this.setState({ devotionMode })}
+                onPickDate={this.pickDevotionDate}
+                onStepMonth={this.stepDevotionMonth}
+                onToggleCalendar={this.toggleDevotionCalendar}
+                panelRef={this.devotionPanelRef}
+                saveState={this.state.devotionSaveState}
+              />
+            )}
+          </AnimatePresence>
         </div>
 
         {selectionToolbar && (
@@ -2111,7 +2275,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         {toast && (
           <div className="toast" role="status">
             {toast.message}
-            {toast.undo && (
+            {toast.undo && toast.kind === "devotion" && (
+              <button onClick={this.undoDevotionClear} type="button">Undo</button>
+            )}
+            {toast.undo && toast.kind !== "devotion" && (
               <button
                 onClick={() => {
                   const annotation = this.pendingUndo;

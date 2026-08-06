@@ -125,6 +125,17 @@ export interface ChapterAnnotation extends AnnotationBase {
 
 export type Annotation = HighlightAnnotation | ChapterAnnotation;
 
+export interface DevotionEntry {
+  v: 1;
+  date: string;
+  answers: Record<string, string>;
+  ref: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DevotionStore = Record<string, DevotionEntry>;
+
 export interface HighlightDraft {
   paraId: string;
   key: string;

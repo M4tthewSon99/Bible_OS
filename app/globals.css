@@ -3055,17 +3055,18 @@ button:active:not(:disabled) {
   }
 
   .header-actions {
-    --header-action-size: 40px;
-    gap: 2px;
+    --header-action-size: 38px;
+    gap: 0;
   }
 
   .search-trigger,
   .icon-button {
-    width: 40px;
-    min-width: 40px;
-    height: 40px;
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
     border-radius: 11px;
   }
+
 
   .translation-row {
     display: flex;
@@ -3246,7 +3247,7 @@ button:active:not(:disabled) {
 
 @media (max-width: 390px) {
   .header-actions {
-    --header-action-size: 38px;
+    --header-action-size: 34px;
   }
 
   .header-grid {
@@ -3259,14 +3260,250 @@ button:active:not(:disabled) {
   }
 
   .chapter-picker {
-    max-width: 82px;
+    max-width: 74px;
   }
 
   .search-trigger,
   .icon-button {
-    width: 38px;
-    min-width: 38px;
-    height: 40px;
+    width: 34px;
+    min-width: 34px;
+    height: 38px;
+  }
+}
+
+/* Daily devotion — calendar popover and journal panel */
+
+.devotion-button {
+  position: relative;
+}
+
+.devotion-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* The calendar lives inside the panel and folds away once a day is picked,
+   so it never covers the reader and never steals the writing space. */
+.devotion-calendar-wrap {
+  overflow: hidden;
+}
+
+.devotion-calendar {
+  --calendar-day-size: 34px;
+
+  margin: 8px 0 4px;
+  padding: 10px 10px 8px;
+  border: 1px solid rgb(48 44 38 / 9%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 54%);
+}
+
+.calendar-head {
+  display: grid;
+  align-items: center;
+  margin-bottom: 8px;
+  grid-template-columns: auto 1fr auto;
+}
+
+.calendar-month {
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+.calendar-nav {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  outline: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  place-items: center;
+}
+
+.calendar-nav:hover,
+.calendar-today:hover {
+  background: rgb(238 236 231 / 74%);
+  color: var(--ink);
+}
+
+.calendar-weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.calendar-weekdays {
+  margin-bottom: 2px;
+}
+
+.calendar-weekdays span {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+/* Six fixed rows, so stepping months never resizes the surface — the height
+   is pinned so the grid can swap out entirely without the panel shifting. */
+.calendar-viewport {
+  height: calc(var(--calendar-day-size) * 6);
+  overflow: hidden;
+}
+
+.calendar-day {
+  display: grid;
+  height: var(--calendar-day-size);
+  border: 0;
+  border-radius: 9px;
+  outline: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  place-items: center;
+  position: relative;
+}
+
+.calendar-day:hover {
+  background: rgb(238 236 231 / 74%);
+  color: var(--ink);
+}
+
+.calendar-day.outside {
+  color: var(--faint);
+  opacity: 0.45;
+}
+
+.calendar-day.today {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  font-weight: 600;
+}
+
+.calendar-day.selected,
+.calendar-day.selected:hover {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.calendar-day.has-entry::after {
+  position: absolute;
+  bottom: 4px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentcolor;
+  content: "";
+  opacity: 0.75;
+}
+
+.calendar-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgb(48 44 38 / 7%);
+}
+
+.calendar-today {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid rgb(48 44 38 / 11%);
+  border-radius: 8px;
+  outline: 0;
+  background: rgb(255 255 255 / 72%);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 11.5px;
+}
+
+.devotion-date-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  text-align: left;
+}
+
+.devotion-date-button svg {
+  flex: 0 0 auto;
+  color: var(--faint);
+  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), color 140ms ease-out;
+}
+
+.devotion-date-button:hover svg {
+  color: var(--muted);
+}
+
+.devotion-date-button.open svg {
+  transform: rotate(180deg);
+}
+
+.devotion-block {
+  margin-bottom: 20px;
+}
+
+.devotion-hint {
+  margin: 2px 0 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.devotion-editor {
+  min-height: 104px;
+  field-sizing: content;
+}
+
+/* Must follow the base rules above — the breakpoint blocks earlier in this
+   file would otherwise be overridden by them. */
+@media (max-width: 759px) {
+  .devotion-calendar {
+    --calendar-day-size: 44px;
+
+    padding: 10px 8px 8px;
+  }
+
+  .calendar-day {
+    border-radius: 11px;
+    font-size: 14px;
+  }
+
+  .calendar-nav {
+    width: 36px;
+    height: 36px;
+  }
+
+  .calendar-today {
+    min-height: 36px;
+    padding: 0 16px;
+  }
+
+  .devotion-calendar {
+    padding: 10px 8px 8px;
   }
 }
 
