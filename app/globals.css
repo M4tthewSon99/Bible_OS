@@ -17,6 +17,15 @@
   --os-gap: 66px;
   --size-pct: 50%;
   --header-height: 56px;
+  --header-popover-width: min(548px, calc(100vw - 32px));
+  --reader-scrim: linear-gradient(
+    to bottom,
+    rgb(32 29 24 / 0%) 0,
+    rgb(32 29 24 / 7%) 24px,
+    rgb(32 29 24 / 16%) 72px,
+    rgb(32 29 24 / 24%) 140px,
+    rgb(32 29 24 / 24%) 100%
+  );
 }
 
 * {
@@ -1103,7 +1112,7 @@ a:hover {
   margin: 0 auto;
 }
 
-.translation-labels,
+.translation-labels-inner,
 .reading-grid {
   display: grid;
   grid-template-columns: var(--os-cols);
@@ -1114,9 +1123,16 @@ a:hover {
   position: sticky;
   z-index: 20;
   top: var(--header-height);
-  padding: 14px 0 9px;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  padding: 14px clamp(34px, 4vw, 58px) 9px;
   border-bottom: 1px solid #f4f3f0;
   background: var(--paper);
+}
+
+.translation-labels-inner {
+  max-width: 1180px;
+  margin: 0 auto;
 }
 
 .translation-labels span {
@@ -1687,6 +1703,11 @@ a:hover {
     padding-left: 22px;
   }
 
+  .translation-labels {
+    padding-right: 22px;
+    padding-left: 22px;
+  }
+
   .chapter-title h2 {
     font-size: 30px;
   }
@@ -1928,15 +1949,15 @@ button:active:not(:disabled) {
 .app-header::after {
   position: absolute;
   right: 0;
-  bottom: -40px;
+  bottom: -64px;
   left: 0;
-  height: 40px;
+  height: 64px;
   background: linear-gradient(
     to bottom,
-    rgb(42 38 32 / 2.8%) 0%,
-    rgb(42 38 32 / 1.7%) 24%,
-    rgb(42 38 32 / 0.9%) 48%,
-    rgb(42 38 32 / 0.35%) 72%,
+    rgb(252 252 250 / 84%) 0%,
+    rgb(252 252 250 / 57%) 26%,
+    rgb(252 252 250 / 29%) 54%,
+    rgb(252 252 250 / 10%) 78%,
     transparent 100%
   );
   content: "";
@@ -2129,10 +2150,11 @@ button:active:not(:disabled) {
 }
 
 .menu.chapter-menu {
-  /* Clears the header edge instead of hanging off it. */
-  top: calc(100% + 22px);
+  /* Center in the reader area, while never crossing the persistent header. */
+  position: fixed;
+  top: max(calc(var(--header-height) + 16px), calc(50dvh - 215px));
   left: 50%;
-  width: min(548px, calc(100vw - 32px));
+  width: var(--header-popover-width);
   margin-left: max(-274px, calc((100vw - 32px) / -2));
   animation: none;
   background: #fcfcfa;
@@ -2146,126 +2168,6 @@ button:active:not(:disabled) {
   color: var(--ink);
   font-family: "Source Serif 4", "Noto Serif SC", Georgia, serif;
   outline: none;
-}
-
-.picker-search-wrap {
-  position: relative;
-  padding: 12px;
-  border-bottom: 1px solid rgb(48 44 38 / 8%);
-}
-
-.picker-search {
-  position: relative;
-  display: flex;
-  height: 38px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 9px;
-  border: 1px solid rgb(48 44 38 / 9%);
-  border-radius: 10px;
-  background: rgb(236 235 231 / 72%);
-  box-shadow: inset 0 1px 2px rgb(44 40 34 / 4%);
-  color: var(--muted);
-  transition:
-    border-color 140ms ease-out,
-    background-color 140ms ease-out,
-    box-shadow 140ms ease-out;
-}
-
-.picker-search[data-focus-within] {
-  border-color: rgb(66 101 143 / 34%);
-  background: rgb(255 255 255 / 88%);
-  box-shadow: 0 0 0 3px rgb(66 101 143 / 10%), inset 0 1px 1px rgb(44 40 34 / 3%);
-}
-
-.picker-search-icon {
-  flex: none;
-  color: #77736c;
-}
-
-.picker-search input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-size: 13px;
-}
-
-.picker-search input::placeholder {
-  color: #918d86;
-}
-
-.picker-clear {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  flex: none;
-  place-items: center;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #817d76;
-  cursor: pointer;
-  padding: 0;
-}
-
-.picker-search[data-empty] .picker-clear {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.picker-direct {
-  display: grid;
-  width: 100%;
-  min-height: 50px;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  padding: 7px 9px;
-  border: 1px solid rgb(66 101 143 / 15%);
-  border-radius: 10px;
-  background: rgb(227 234 242 / 62%);
-  color: var(--ink-soft);
-  cursor: pointer;
-  text-align: left;
-}
-
-.picker-direct:hover,
-.picker-direct[data-hovered] {
-  background: rgb(219 229 240 / 78%);
-}
-
-.picker-direct-action {
-  color: var(--accent-dark);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.055em;
-  text-transform: uppercase;
-}
-
-.picker-direct strong,
-.picker-direct small {
-  display: block;
-}
-
-.picker-direct strong {
-  font-size: 12.5px;
-  font-weight: 650;
-}
-
-.picker-direct small {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.picker-direct-return {
-  color: #8b877f;
-  font-size: 13px;
 }
 
 .picker-desktop-body {
@@ -2286,6 +2188,7 @@ button:active:not(:disabled) {
   flex-direction: column;
   border-right: 1px solid rgb(48 44 38 / 8%);
   background: #fcfcfa;
+  overflow: hidden;
 }
 
 .picker-book-list,
@@ -2307,21 +2210,27 @@ button:active:not(:disabled) {
   display: none;
 }
 
-.picker-book-list header {
-  position: sticky;
-  z-index: 2;
-  top: 0;
+.new-testament-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgb(48 44 38 / 10%);
+}
+
+.picker-testament-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
   width: 100%;
-  margin: 0 0 5px;
-  padding: 8px 14px 7px;
+  height: 30.15px;
+  padding: 0 14px;
   border: 0;
-  border-radius: 0;
-  background: linear-gradient(100deg, #ebeae5, #f5f4f0);
-  box-shadow: 0 5px 8px #fcfcfa;
-  color: #69665f;
+  background: var(--accent);
+  color: #fff;
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.08em;
+  text-align: center;
   text-transform: uppercase;
 }
 
@@ -2329,7 +2238,7 @@ button:active:not(:disabled) {
   position: relative;
   display: grid;
   min-height: 36px;
-  grid-template-columns: minmax(0, 1fr) auto 15px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   margin: 0 7px;
@@ -2370,37 +2279,6 @@ button:active:not(:disabled) {
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.book-option-check {
-  opacity: 0;
-}
-
-.book-option[data-selected] .book-option-check,
-.book-option[data-current] .book-option-check {
-  opacity: 1;
-}
-
-.picker-empty {
-  display: flex;
-  min-height: 150px;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 5px;
-  padding: 18px;
-  color: var(--muted);
-  text-align: center;
-}
-
-.picker-empty strong {
-  color: var(--ink-soft);
-  font-size: 12.5px;
-}
-
-.picker-empty span {
-  font-size: 11px;
-  line-height: 1.45;
 }
 
 .picker-chapters-pane {
@@ -2642,20 +2520,19 @@ button:active:not(:disabled) {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 24%), 0 2px 5px rgb(46 74 106 / 20%);
 }
 
-/* Sits below the header's stacking context (z-60) on purpose: the desktop
-   picker is rendered inside the header, so a higher scrim would cover the
-   very panel it is meant to separate.
-   Material matches .spotlight-backdrop's search scrim on purpose: two modal
-   pickers opened from the same header should dim the same way, and the
-   deeper blur (vs. a merely darker tint) is what actually keeps reader text
-   from being legible enough to read as UI. */
-.compact-menu-backdrop {
+/* Shared visual seam for every header-launched reader overlay. The gradient
+   starts below the header so both search and chapter selection fade from the
+   same bright edge into the same dimmed reading surface. */
+.reader-scrim {
   position: fixed;
   z-index: 55;
-  inset: 0;
-  display: block;
-  background: rgb(32 29 24 / 24%);
+  inset: var(--header-height) 0 0;
+  background: var(--reader-scrim);
   backdrop-filter: blur(8px) saturate(78%);
+}
+
+.compact-menu-backdrop {
+  display: block;
 }
 
 .sheet-grabber {
@@ -2710,31 +2587,32 @@ button:active:not(:disabled) {
 }
 
 .translation-labels {
-  padding: 16px 0 15px;
+  padding-top: 16px;
+  padding-bottom: 15px;
   border: 0;
   background: linear-gradient(
     to bottom,
     rgb(252 252 250 / 99%) 0%,
-    rgb(252 252 250 / 97%) 44%,
-    rgb(252 252 250 / 91%) 68%,
-    rgb(252 252 250 / 76%) 84%,
-    rgb(252 252 250 / 48%) 100%
+    rgb(252 252 250 / 97%) 38%,
+    rgb(252 252 250 / 88%) 64%,
+    rgb(252 252 250 / 60%) 84%,
+    rgb(252 252 250 / 24%) 100%
   );
-  backdrop-filter: blur(12px);
 }
 
 .translation-labels::after {
   position: absolute;
   right: 0;
-  bottom: -32px;
+  bottom: -80px;
   left: 0;
-  height: 32px;
+  height: 80px;
   background: linear-gradient(
     to bottom,
-    rgb(252 252 250 / 48%) 0%,
-    rgb(252 252 250 / 28%) 32%,
-    rgb(252 252 250 / 13%) 60%,
-    rgb(252 252 250 / 4%) 82%,
+    rgb(252 252 250 / 24%) 0%,
+    rgb(252 252 250 / 18%) 25%,
+    rgb(252 252 250 / 10%) 52%,
+    rgb(252 252 250 / 4%) 76%,
+    rgb(252 252 250 / 1%) 90%,
     transparent 100%
   );
   content: "";
@@ -2816,27 +2694,25 @@ button:active:not(:disabled) {
 }
 
 .spotlight-backdrop {
-  align-items: flex-start;
-  padding: max(82px, 11vh) 22px 22px;
-  background: rgb(32 29 24 / 24%);
-  backdrop-filter: blur(8px) saturate(78%);
+  align-items: center;
+  padding: 16px;
   animation: none;
 }
 
 .spotlight {
-  width: min(560px, 100%);
-  max-height: min(760px, 78vh);
-  border: 1px solid rgb(255 255 255 / 54%);
-  border-radius: 20px;
-  background: var(--material-heavy);
-  box-shadow: 0 42px 110px -34px rgb(20 18 14 / 62%), 0 12px 36px -22px rgb(20 18 14 / 36%);
-  backdrop-filter: blur(30px) saturate(175%);
+  width: var(--header-popover-width);
+  max-height: min(760px, calc(100dvh - var(--header-height) - 32px));
+  border: 1px solid rgb(52 47 40 / 10%);
+  border-radius: 15px;
+  background: #fcfcfa;
+  box-shadow: var(--surface-shadow);
+  backdrop-filter: none;
   animation: none;
 }
 
 .spotlight-head {
   border-bottom-color: rgb(48 44 38 / 8%);
-  background: rgb(252 252 250 / 78%);
+  background: #fcfcfa;
 }
 
 .spotlight-form input {
@@ -3104,6 +2980,8 @@ button:active:not(:disabled) {
 
   .translation-labels {
     padding-top: 13px;
+    padding-right: 20px;
+    padding-left: 20px;
   }
 
   .chapter-title.first {
@@ -3119,12 +2997,7 @@ button:active:not(:disabled) {
   }
 
   .compact-menu-backdrop {
-    position: fixed;
     z-index: 69;
-    inset: 0;
-    display: block;
-    background: rgb(32 29 24 / 20%);
-    backdrop-filter: blur(8px) saturate(78%);
   }
 
   .menu.chapter-menu,
@@ -3157,14 +3030,6 @@ button:active:not(:disabled) {
 
   .chapter-picker-dialog {
     height: 100%;
-  }
-
-  .picker-search-wrap {
-    padding: 25px 12px 10px;
-  }
-
-  .picker-search {
-    height: 42px;
   }
 
   .picker-books-pane,
@@ -3211,14 +3076,13 @@ button:active:not(:disabled) {
 
   .spotlight-backdrop {
     align-items: flex-end;
-    padding: 8dvh 0 0;
-    background: rgb(32 29 24 / 20%);
+    padding: 0 10px;
   }
 
   .spotlight {
     width: 100%;
-    height: 92dvh;
-    max-height: 92dvh;
+    height: min(78dvh, 680px);
+    max-height: min(78dvh, 680px);
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
@@ -3235,7 +3099,7 @@ button:active:not(:disabled) {
   }
 
   .spotlight-results {
-    max-height: calc(92dvh - 72px);
+    max-height: calc(min(78dvh, 680px) - 72px);
     padding-bottom: env(safe-area-inset-bottom);
   }
 
@@ -3533,9 +3397,8 @@ button:active:not(:disabled) {
     backdrop-filter: none;
   }
 
-  .spotlight-backdrop,
-  .notes-backdrop,
-  .compact-menu-backdrop {
+  .reader-scrim,
+  .notes-backdrop {
     backdrop-filter: none;
   }
 }

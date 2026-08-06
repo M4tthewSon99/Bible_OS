@@ -822,6 +822,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const typing = target && (
       target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable
     );
+    if (event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "i") {
+      event.preventDefault();
+      this.toggleChapterPicker();
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
       if (this.state.spotlightOpen) this.closeSpotlight();
@@ -884,7 +889,16 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     });
   };
 
-  private closeSpotlight = (): void => {
+  private toggleChapterPicker = (): void => {
+    if (this.state.menu === "chapters") {
+      this.setState({ menu: null });
+      return;
+    }
+    if (this.state.spotlightOpen) this.closeSpotlight(false);
+    this.setState({ menu: "chapters" });
+  };
+
+  private closeSpotlight = (restoreOpener = true): void => {
     if (this.searchTimer) clearTimeout(this.searchTimer);
     if (this.searchIndicatorTimer) clearTimeout(this.searchIndicatorTimer);
     this.searchAbort?.abort();
@@ -902,7 +916,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       activeSearchIndex: 0,
       referenceHint: null,
     });
-    setTimeout(() => restoreFocus(opener), 0);
+    if (restoreOpener) setTimeout(() => restoreFocus(opener), 0);
   };
 
   private searchCacheKey(query: string): string {
@@ -1599,7 +1613,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
               <AnimatePresence>
               {menu === "settings" && (
                 <>
-                {compact && <div aria-hidden="true" className="compact-menu-backdrop" onClick={() => this.setState({ menu: null })} />}
+                {compact && <div aria-hidden="true" className="reader-scrim compact-menu-backdrop" onClick={() => this.setState({ menu: null })} />}
                 <FluidSurface
                   ariaLabel="Display settings"
                   className="menu settings-menu"
@@ -1784,7 +1798,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       <SurfacePortal>
       <AnimatePresence>
       {spotlightOpen && (
-        <FluidBackdrop className="spotlight-backdrop" onDismiss={this.closeSpotlight}>
+        <FluidBackdrop className="reader-scrim spotlight-backdrop" onDismiss={this.closeSpotlight}>
           <FluidSurface
             ariaLabel="Search"
             ariaModal
@@ -2218,8 +2232,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           >
             <div className="reader-inner">
               <div className="translation-labels">
-                {showEnglish && <span>{englishLabel}</span>}
-                {showChinese && <span lang="zh">和合本</span>}
+                <div className="translation-labels-inner">
+                  {showEnglish && <span>{englishLabel}</span>}
+                  {showChinese && <span lang="zh">和合本</span>}
+                </div>
               </div>
               {this.state.atCanonStart && <p className="canon-edge">Beginning of the canon</p>}
               {chapters.map((chapter, index) =>

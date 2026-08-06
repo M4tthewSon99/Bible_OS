@@ -11,11 +11,9 @@ import {
   Button,
   Dialog,
   Header,
-  Input,
   ListBox,
   ListBoxItem,
   ListBoxSection,
-  SearchField,
 } from "react-aria-components";
 import { motion } from "motion/react";
 import {
@@ -58,20 +56,6 @@ const stepVariants = {
   exit: (direction: PickerDirection) => ({ opacity: 0, x: direction * -30 }),
 };
 
-function normalizeBookQuery(value: string): string {
-  return value
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[\s._-]+/g, "");
-}
-
-function bookMatches(book: Book, query: string): boolean {
-  const needle = normalizeBookQuery(query);
-  if (!needle) return true;
-  const haystack = normalizeBookQuery(`${book.name} ${book.zh} ${book.aliases.join(" ")}`);
-  return haystack.includes(needle);
-}
-
 export function ChapterPicker({
   compact,
   currentBookId,
@@ -84,42 +68,50 @@ export function ChapterPicker({
   onPick,
   open,
 }: ChapterPickerProps): ReactNode {
-  const [query, setQuery] = useState("");
+  const [activeTestament, setActiveTestament] = useState(() => scripture.bookTestament(currentBookId));
   const [selectedBookId, setSelectedBookId] = useState(currentBookId);
   const [step, setStep] = useState<PickerStep>("books");
   const [direction, setDirection] = useState<PickerDirection>(1);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const bookListRef = useRef<HTMLDivElement>(null);
+  const newTestamentRef = useRef<HTMLElement>(null);
   const selectedBookRef = useRef<HTMLDivElement>(null);
   const chapterListRef = useRef<HTMLDivElement>(null);
   const currentChapterRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const wasOpenRef = useRef(false);
 
-  const directReference = scripture.parseReference(query);
-  const visibleBooks = directReference
-    ? [BY_ID[directReference.bookId]]
-    : ALL_BOOKS.filter((book) => bookMatches(book, query));
-  const oldBooks = visibleBooks.filter((book) => scripture.bookTestament(book.id) === "old");
-  const newBooks = visibleBooks.filter((book) => scripture.bookTestament(book.id) === "new");
+  const oldBooks = ALL_BOOKS.filter((book) => scripture.bookTestament(book.id) === "old");
+  const newBooks = ALL_BOOKS.filter((book) => scripture.bookTestament(book.id) === "new");
   const selectedBook = BY_ID[selectedBookId] || BY_ID[currentBookId];
+
+  const updateActiveTestament = () => {
+    const list = bookListRef.current;
+    const newTestament = newTestamentRef.current;
+    if (!list || !newTestament) return;
+    setActiveTestament(
+      newTestament.getBoundingClientRect().top <= list.getBoundingClientRect().top
+        ? "new"
+        : "old",
+    );
+  };
 
   useEffect(() => {
     if (open) {
       wasOpenRef.current = true;
-      setQuery("");
+      setActiveTestament(scripture.bookTestament(currentBookId));
       setSelectedBookId(currentBookId);
       setStep("books");
       setDirection(1);
-      const focusTimer = window.setTimeout(() => searchInputRef.current?.focus(), 40);
       const scrollTimer = window.setTimeout(() => {
         const list = bookListRef.current;
         const book = selectedBookRef.current;
-        if (list && book) list.scrollTop = Math.max(0, book.offsetTop - list.clientHeight / 3);
+        if (list && book) {
+          list.scrollTop = Math.max(0, book.offsetTop - list.clientHeight / 3);
+          updateActiveTestament();
+        }
       }, 80);
       return () => {
-        window.clearTimeout(focusTimer);
         window.clearTimeout(scrollTimer);
       };
     }
@@ -157,16 +149,6 @@ export function ChapterPicker({
   const goBack = () => {
     setDirection(-1);
     setStep("books");
-    window.setTimeout(() => searchInputRef.current?.focus(), 40);
-  };
-
-  const submitQuery = () => {
-    if (directReference) {
-      onOpenChange(false);
-      onPick(directReference.bookId, directReference.chapter);
-      return;
-    }
-    if (visibleBooks.length === 1) chooseBook(visibleBooks[0].id);
   };
 
   const trapCompactFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
@@ -186,40 +168,6 @@ export function ChapterPicker({
     }
   };
 
-  const renderSearch = () => (
-    <div className="picker-search-wrap">
-      <SearchField
-        aria-label="Filter books or enter a reference"
-        className="picker-search"
-        onChange={setQuery}
-        onSubmit={submitQuery}
-        value={query}
-      >
-        <svg aria-hidden="true" className="picker-search-icon" fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" viewBox="0 0 24 24" width="15">
-          <circle cx="11" cy="11" r="6.5" />
-          <path d="m16 16 4 4" />
-        </svg>
-        <Input autoFocus placeholder="Filter books or enter a reference" ref={searchInputRef} />
-        <Button aria-label="Clear book filter" className="picker-clear" slot="clear">
-          <svg aria-hidden="true" fill="none" height="13" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" viewBox="0 0 24 24" width="13">
-            <path d="m7 7 10 10M17 7 7 17" />
-          </svg>
-        </Button>
-      </SearchField>
-
-      {directReference && (
-        <Button className="picker-direct" onPress={submitQuery}>
-          <span className="picker-direct-action">Go to</span>
-          <span>
-            <strong>{scripture.refLabel(directReference.bookId, directReference.chapter, directReference.verse)}</strong>
-            <small lang="zh">{scripture.refLabelZh(directReference.bookId, directReference.chapter, directReference.verse)}</small>
-          </span>
-          <span aria-hidden="true" className="picker-direct-return">↵</span>
-        </Button>
-      )}
-    </div>
-  );
-
   const renderBookItems = (books: Book[]) => books.map((book) => (
     <ListBoxItem
       className="book-option"
@@ -231,14 +179,14 @@ export function ChapterPicker({
     >
       <span>{book.name}</span>
       <span className="book-option-zh" lang="zh">{book.zh}</span>
-      <svg aria-hidden="true" className="book-option-check" fill="none" height="13" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="13">
-        <path d="m5 12 4 4L19 6" />
-      </svg>
     </ListBoxItem>
   ));
 
   const renderBooks = () => (
     <div className="picker-books-pane">
+      <div className="picker-testament-label">
+        {activeTestament === "old" ? "Old Testament" : "New Testament"}
+      </div>
       <ListBox
         aria-label="Books"
         className="picker-book-list"
@@ -247,25 +195,20 @@ export function ChapterPicker({
           const [bookId] = Array.from(keys);
           if (bookId) chooseBook(String(bookId));
         }}
+        onScroll={updateActiveTestament}
         ref={bookListRef}
-        renderEmptyState={() => (
-          <div className="picker-empty">
-            <strong>No matching book</strong>
-            <span>Try a name such as John or <span lang="zh">约翰福音</span>.</span>
-          </div>
-        )}
         selectedKeys={compact ? [] : [selectedBookId]}
         selectionMode="single"
       >
         {oldBooks.length > 0 && (
           <ListBoxSection id="old-testament">
-            <Header>Old Testament</Header>
+            <Header className="sr-only">Old Testament</Header>
             {renderBookItems(oldBooks)}
           </ListBoxSection>
         )}
         {newBooks.length > 0 && (
-          <ListBoxSection id="new-testament">
-            <Header>New Testament</Header>
+          <ListBoxSection className="new-testament-section" id="new-testament" ref={newTestamentRef}>
+            <Header className="sr-only">New Testament</Header>
             {renderBookItems(newBooks)}
           </ListBoxSection>
         )}
@@ -328,9 +271,11 @@ export function ChapterPicker({
       <button
         aria-expanded={open}
         aria-haspopup="dialog"
+        aria-keyshortcuts="Meta+I"
         className="current-label"
         onClick={() => onOpenChange(!open)}
         ref={triggerRef}
+        title="Choose a book and chapter (⌘I)"
         type="button"
       >
         {showEnglish && <span aria-live="polite" className="current-label-en">{currentLabel}</span>}
@@ -348,7 +293,7 @@ export function ChapterPicker({
             <motion.div
               animate={{ opacity: 1 }}
               aria-hidden="true"
-              className="compact-menu-backdrop"
+              className="reader-scrim compact-menu-backdrop"
               exit={{ opacity: 0 }}
               initial={{ opacity: 0 }}
               key="picker-scrim"
@@ -391,22 +336,16 @@ export function ChapterPicker({
                           variants={stepVariants}
                         >
                           {step === "books" ? (
-                            <>
-                              {renderSearch()}
-                              {renderBooks()}
-                            </>
+                            renderBooks()
                           ) : renderChapters(true)}
                         </motion.div>
                       </AnimatePresence>
                     </div>
                   ) : (
-                    <>
-                      {renderSearch()}
-                      <div className="picker-desktop-body">
-                        {renderBooks()}
-                        {renderChapters(false)}
-                      </div>
-                    </>
+                    <div className="picker-desktop-body">
+                      {renderBooks()}
+                      {renderChapters(false)}
+                    </div>
                   )}
                 </Dialog>
               </FluidSurface>
