@@ -16,7 +16,7 @@
   --os-cols: 1fr 1fr;
   --os-gap: 66px;
   --size-pct: 50%;
-  --header-height: 56px;
+  --header-height: 84px;
   --header-popover-width: min(548px, calc(100vw - 32px));
   --reader-scrim: linear-gradient(
     to bottom,
@@ -679,6 +679,13 @@ a:hover {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.chapter-label-stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  visibility: hidden;
 }
 
 .search-examples button {
@@ -1901,7 +1908,7 @@ a:hover {
   --paper-warm: #f4f3ef;
   --material: rgb(252 252 250 / 78%);
   --material-heavy: rgb(250 250 248 / 92%);
-  --header-height: 60px;
+  --header-height: 84px;
   /* Shared top edge for the header's floating overlays (chapter picker and
      search spotlight) so they open at the same height instead of drifting
      apart. The max() keeps them clear of the persistent header on short
@@ -1921,6 +1928,20 @@ body {
     var(--paper);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
   font-optical-sizing: auto;
+}
+
+.chapter-title h2 > span:first-child {
+  white-space: nowrap;
+}
+
+.chapter-title-zh {
+  margin-left: 0.26em;
+  color: #8e8a82;
+  font-family: "Noto Serif SC", serif;
+  font-size: 0.42em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
 
 body.modal-open {
@@ -1995,7 +2016,7 @@ button:active:not(:disabled) {
 .header-grid {
   grid-template-columns: minmax(9rem, 1fr) auto minmax(9rem, 1fr);
   gap: 18px;
-  height: 60px;
+  height: var(--header-height);
   padding: 0 clamp(18px, 2.2vw, 34px);
 }
 
@@ -2072,7 +2093,35 @@ button:active:not(:disabled) {
   --header-action-size: 36px;
   height: var(--header-action-size);
   justify-self: end;
+  gap: 0;
+  transition: gap 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.header-actions > :not(.notes-button) {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(8px);
+  transition:
+    max-width 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 140ms ease,
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 260ms;
+  visibility: hidden;
+}
+
+.header-actions.panel-expanded {
   gap: 5px;
+}
+
+.header-actions.panel-expanded > :not(.notes-button) {
+  max-width: 12rem;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+  transition-delay: 0s;
+  visibility: visible;
 }
 
 .header-actions > .search-trigger,
@@ -2086,6 +2135,16 @@ button:active:not(:disabled) {
 .header-actions > .menu-wrap > .icon-button {
   width: 100%;
   height: 100%;
+}
+
+.header-actions:not(.panel-expanded) > :not(.notes-button) {
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  flex: 0 0 0;
+  padding-right: 0;
+  padding-left: 0;
+  border-width: 0;
 }
 
 .search-trigger,
@@ -2686,6 +2745,7 @@ button:active:not(:disabled) {
   font-weight: 580;
   letter-spacing: -0.028em;
   line-height: 1.08;
+  text-align: center;
   font-optical-sizing: auto;
 }
 
@@ -2751,30 +2811,6 @@ button:active:not(:disabled) {
      header — so the offset is measured from --header-height, not from 0. */
   padding: calc(var(--overlay-top) - var(--header-height)) 16px 16px;
   animation: none;
-}
-
-/* Devotion is a screen-level companion to the reader, rather than a second
-   reader sub-panel. Keeping it in the outer layout lets its rail begin at the
-   viewport's top edge while Notes remains attached to the reading workspace. */
-@media (min-width: 1100px) {
-  .app-shell.devotion-rail-active {
-    display: flex;
-    min-height: 100dvh;
-    align-items: start;
-  }
-
-  .app-shell.devotion-rail-active > .reader-workspace {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .app-shell.devotion-rail-active > .devotion-panel {
-    position: sticky;
-    top: 0;
-    flex: 0 0 auto;
-    align-self: start;
-    height: 100dvh;
-  }
 }
 
 .spotlight {
@@ -2976,6 +3012,249 @@ button:active:not(:disabled) {
   display: contents;
 }
 
+/* One restrained entry point keeps the reading header quiet. The panel icon
+   maps directly to the right-edge surface it controls. */
+.tools-panel-trigger {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  justify-self: end;
+  border-radius: 11px;
+  color: #5f5b54;
+}
+
+.tools-panel-trigger[aria-expanded="true"] {
+  border-color: rgb(48 44 38 / 9%);
+  background: rgb(232 231 226 / 82%);
+  color: #25221e;
+}
+
+.utility-panel {
+  isolation: isolate;
+  background: rgb(248 248 246 / 92%);
+  box-shadow:
+    -1px 0 0 rgb(255 255 255 / 72%),
+    -24px 0 54px -38px rgb(25 22 18 / 52%);
+  backdrop-filter: blur(28px) saturate(155%);
+}
+
+.utility-panel-header {
+  display: flex;
+  min-height: 74px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 17px 9px 20px;
+}
+
+.utility-panel-header p,
+.utility-panel-header h2 {
+  margin: 0;
+}
+
+.utility-panel-header p {
+  color: #77736c;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.utility-panel-header h2 {
+  margin-top: 3px;
+  color: #24211d;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  font-optical-sizing: auto;
+}
+
+.utility-panel-header > button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid rgb(48 44 38 / 7%);
+  border-radius: 50%;
+  background: rgb(235 234 229 / 78%);
+  color: #625e57;
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.utility-panel-nav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  padding: 5px 12px 12px;
+  box-shadow: 0 14px 24px -26px rgb(35 31 26 / 55%);
+}
+
+.utility-panel-nav button {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 57px;
+  grid-template-rows: 20px auto;
+  align-content: center;
+  justify-items: center;
+  gap: 4px;
+  padding: 7px 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: #77736c;
+  cursor: pointer;
+}
+
+.utility-panel-nav button:hover {
+  background: rgb(235 234 229 / 62%);
+  color: #34312c;
+}
+
+.utility-panel-nav button.active {
+  border-color: rgb(66 101 143 / 11%);
+  background: rgb(225 231 238 / 76%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 75%);
+  color: #315275;
+}
+
+.utility-panel-nav svg {
+  width: 19px;
+  height: 19px;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.65;
+}
+
+.utility-panel-nav span {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.utility-panel-nav kbd {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  color: #99958e;
+  font-size: 7.5px;
+  font-weight: 600;
+}
+
+.utility-panel-stage {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.utility-panel-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.notes-panel-view,
+.devotion-panel-view {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.devotion-panel-view .notes-footer {
+  flex-wrap: wrap;
+}
+
+.devotion-panel-view .notes-footer > span {
+  flex: 1 0 100%;
+}
+
+.utility-panel-context {
+  margin: 0;
+  padding: 10px 22px 0;
+  color: #6d7f95;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.utility-settings {
+  padding-top: 7px;
+}
+
+.utility-settings .settings-section {
+  padding: 14px 0 18px;
+}
+
+.utility-settings .settings-section + .settings-section {
+  border-top: 1px solid rgb(48 44 38 / 7%);
+}
+
+.utility-search {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.utility-search .spotlight-head {
+  padding: 10px 14px 8px;
+  border: 0;
+  background: transparent;
+}
+
+.utility-search .spotlight-form {
+  height: 46px;
+  padding: 0 10px 0 14px;
+  border: 1px solid rgb(48 44 38 / 10%);
+  border-radius: 13px;
+  background: rgb(255 255 255 / 74%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 78%), 0 1px 3px rgb(35 31 26 / 4%);
+}
+
+.utility-search .spotlight-form input {
+  min-width: 0;
+  font-size: 14px;
+}
+
+.utility-search .search-progress {
+  top: 63px;
+  right: 14px;
+  left: 14px;
+}
+
+.utility-search-welcome {
+  padding: 24px 22px;
+}
+
+.utility-search-welcome > p:first-child {
+  max-width: 28ch;
+  margin: 0 0 18px;
+  color: #6e6a63;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.utility-search-results {
+  min-height: 0;
+  max-height: none;
+  flex: 1;
+}
+
 /* The toast stays a dark HUD: it is transient, non-interactive status, which
    is exactly what a heavier material is for. */
 .toast {
@@ -3045,21 +3324,25 @@ button:active:not(:disabled) {
     border-left: 1px solid rgb(255 255 255 / 62%);
     box-shadow: -28px 0 70px -38px rgb(20 18 14 / 58%);
   }
+
+  .utility-panel-header {
+    padding-left: 28px;
+  }
 }
 
 @media (max-width: 759px) {
   :root {
-    --header-height: 104px;
+    --header-height: 84px;
   }
 
   .app-header {
-    min-height: 104px;
+    min-height: var(--header-height);
   }
 
   .header-grid {
     grid-template-columns: auto minmax(64px, 1fr) auto;
     gap: 8px;
-    height: 60px;
+    height: var(--header-height);
     padding: 0 12px;
   }
 
@@ -3884,6 +4167,154 @@ button:active:not(:disabled) {
   }
 }
 
+/* The chapter heading itself is the persistent header title. Native sticky
+   positioning keeps its typography and pixels unchanged as it crosses into
+   the app header; the next chapter's real heading pushes it away. Keeping the
+   inter-chapter breathing room inside the previous chapter lets that handoff
+   remain continuous instead of leaving a blank gap between sections. */
+:root {
+  --chapter-title-size: clamp(32px, 2.5vw, 38px);
+  --chapter-title-top: 21px;
+}
+
+.chapter-picker {
+  width: min(38vw, 40rem);
+  max-width: none;
+}
+
+.current-label {
+  width: 100%;
+  justify-content: center;
+}
+
+.chapter-block {
+  position: relative;
+}
+
+@keyframes chapter-title-release {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  22%,
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+.chapter-block::after {
+  display: block;
+  height: 84px;
+  content: "";
+}
+
+.chapter-block + .chapter-block {
+  border-top: 0;
+}
+
+.chapter-block + .chapter-block::before {
+  position: absolute;
+  top: -28px;
+  right: 0;
+  left: 0;
+  border-top: 1px solid #f0efec;
+  content: "";
+  pointer-events: none;
+}
+
+.chapter-title,
+.chapter-title.first {
+  position: sticky;
+  z-index: 61;
+  top: var(--chapter-title-top);
+  margin: 0;
+  padding-top: 0;
+  border-top: 0;
+  pointer-events: none;
+}
+
+/* Fade the outgoing heading only while the end of its chapter crosses the
+   header. A view timeline keeps the handoff locked to the user's scroll and
+   automatically reverses it when they scroll back up. */
+@supports (animation-timeline: view()) {
+  .chapter-block {
+    view-timeline-name: --chapter-section;
+    view-timeline-axis: block;
+  }
+
+  .chapter-title,
+  .chapter-title.first {
+    animation-name: chapter-title-release;
+    animation-duration: 1ms;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-timeline: --chapter-section;
+    animation-range: exit-crossing calc(100% - 96px) exit-crossing 100%;
+  }
+}
+
+.chapter-title.first {
+  margin-top: 72px;
+}
+
+.chapter-title + .reading-grid {
+  padding-top: 24px;
+}
+
+.chapter-title h2 {
+  display: flex;
+  max-width: calc(100vw - 300px);
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.26em;
+  margin: 0 auto;
+  color: #201e1b;
+  font-size: var(--chapter-title-size);
+  font-weight: 580;
+  letter-spacing: -0.028em;
+  line-height: 1.08;
+  text-align: center;
+  font-optical-sizing: auto;
+}
+
+.chapter-title-zh {
+  margin-left: 0;
+}
+
+@media (max-width: 1099px) {
+  :root {
+    --chapter-title-size: clamp(28px, 3.2vw, 34px);
+    --chapter-title-top: 24px;
+  }
+}
+
+@media (max-width: 759px) {
+  :root {
+    --chapter-title-size: 18px;
+    --chapter-title-top: 32px;
+  }
+
+  .chapter-picker {
+    width: 100%;
+    max-width: 92px;
+  }
+
+  .chapter-block::after {
+    height: 64px;
+  }
+
+  .chapter-title.first {
+    margin-top: 48px;
+  }
+
+  .chapter-title h2 {
+    max-width: calc(100vw - 24px);
+  }
+
+}
+
 @media (prefers-reduced-transparency: reduce) {
   .app-header,
   .menu,
@@ -3928,9 +4359,15 @@ button:active:not(:disabled) {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .header-actions,
+  .header-actions > * {
+    transition: none;
+  }
+
   .menu,
   .spotlight,
-  .notes-panel {
+  .notes-panel,
+  .chapter-title {
     transform: none !important;
   }
 }

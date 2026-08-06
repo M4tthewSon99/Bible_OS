@@ -2,13 +2,11 @@
 
 import type {
   ChangeEvent,
-  KeyboardEvent as ReactKeyboardEvent,
   ReactNode,
-  RefObject,
 } from "react";
 import { useRef } from "react";
-import { motion, type Transition } from "motion/react";
-import { AnimatePresence, FluidBackdrop, FluidSurface } from "@/components/fluid-surfaces";
+import { motion } from "motion/react";
+import { AnimatePresence } from "@/components/fluid-surfaces";
 import { DevotionCalendar } from "@/components/devotion-calendar";
 import { DEVOTION_PROMPTS, formatDateLabel } from "@/lib/devotion";
 import { blockForDevotionDisplay, sectionsForDevotionDisplay } from "@/lib/devotion-layout";
@@ -30,14 +28,11 @@ interface DevotionPanelProps {
   mode: "write" | "preview";
   month: string;
   monthDirection: 1 | -1;
-  narrow: boolean;
   onAnswerChange: (promptId: string, value: string) => void;
   onCancelImport: () => void;
   onClear: () => void;
-  onClose: () => void;
   onConfirmReplace: () => void;
   onEditImported: () => void;
-  onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   onModeChange: (mode: "write" | "preview") => void;
   onPhotoSelected: (file: File, method: DevotionImportMethod) => void;
   onPickDate: (dateKey: string) => void;
@@ -45,13 +40,7 @@ interface DevotionPanelProps {
   onStepMonth: (delta: 1 | -1) => void;
   onToggleCalendar: () => void;
   onUpdateImportDraft: (draft: DevotionImportDraft) => void;
-  panelRef: RefObject<HTMLDivElement | null>;
-  /* Supplied by the reader so both side panels share one resize handle
-     implementation and one stored width. */
-  resizer?: ReactNode;
   saveState: string;
-  transitionOverride?: Transition;
-  width: number;
 }
 
 function fullDateLabel(dateKey: string): string {
@@ -282,14 +271,11 @@ export function DevotionPanel({
   mode,
   month,
   monthDirection,
-  narrow,
   onAnswerChange,
   onCancelImport,
   onClear,
-  onClose,
   onConfirmReplace,
   onEditImported,
-  onKeyDown,
   onModeChange,
   onPhotoSelected,
   onPickDate,
@@ -297,11 +283,7 @@ export function DevotionPanel({
   onStepMonth,
   onToggleCalendar,
   onUpdateImportDraft,
-  panelRef,
-  resizer,
   saveState,
-  transitionOverride,
-  width,
 }: DevotionPanelProps): ReactNode {
   const photoInputRef = useRef<HTMLInputElement>(null);
   const photoImportMethodRef = useRef<DevotionImportMethod>("cloud-vision");
@@ -319,31 +301,9 @@ export function DevotionPanel({
     photoInputRef.current?.click();
   };
 
-  const panel = (
-    <FluidSurface
-      ariaLabel="Daily devotion"
-      ariaModal={narrow}
-      className="notes-panel devotion-panel"
-      draggable={narrow}
-      edge="right"
-      /* On desktop this is intentionally the same width transition as Notes:
-         the reader and its companion rail trade space as one physical action. */
-      expandWidth={narrow ? undefined : width}
-      key="devotion-panel"
-      onClick={(event) => event.stopPropagation()}
-      onDismiss={onClose}
-      onKeyDown={onKeyDown}
-      ref={panelRef}
-      role={narrow ? "dialog" : "complementary"}
-      showHandle={narrow}
-      transitionOverride={transitionOverride}
-    >
-      {resizer}
-      <div className="notes-header">
-        <span>{reviewing ? "Review devotion" : "Devotion"}</span>
-        <button aria-label="Close devotion" onClick={onClose} type="button">×</button>
-      </div>
-
+  return (
+    <div className="devotion-panel-view">
+      {reviewing && <p className="utility-panel-context">Review devotion</p>}
       <div className="notes-content">
         {!reviewing && (
           <>
@@ -517,12 +477,6 @@ export function DevotionPanel({
           </>
         )}
       </div>
-    </FluidSurface>
+    </div>
   );
-
-  return narrow ? (
-    <FluidBackdrop className="notes-backdrop devotion-backdrop" onDismiss={onClose}>
-      {panel}
-    </FluidBackdrop>
-  ) : panel;
 }

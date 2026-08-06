@@ -8,13 +8,13 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import { motion } from "motion/react";
 import { ChapterPicker } from "@/components/chapter-picker";
 import {
   AnimatePresence,
   FluidBackdrop,
   FluidProvider,
   FluidSurface,
-  SurfacePortal,
 } from "@/components/fluid-surfaces";
 import * as scripture from "@/lib/bible-source";
 import {
@@ -24,7 +24,6 @@ import {
   shiftMonth,
   todayKey,
 } from "@/lib/devotion";
-import { DevotionTrigger } from "@/components/devotion-calendar";
 import { DevotionPanel } from "@/components/devotion-panel";
 import { PanelResizer } from "@/components/panel-resizer";
 import { esvSearchClient } from "@/lib/esv-search-client";
@@ -88,6 +87,15 @@ interface LoadedChapter {
   data?: ChapterData;
 }
 
+function uniqueLoadedChapters(chapters: LoadedChapter[]): LoadedChapter[] {
+  const seen = new Set<string>();
+  return chapters.filter((chapter) => {
+    if (seen.has(chapter.key)) return false;
+    seen.add(chapter.key);
+    return true;
+  });
+}
+
 interface CurrentChapter {
   bookId: string;
   chapter: number;
@@ -119,6 +127,8 @@ interface Toast {
   kind?: "devotion";
 }
 
+type SidePanelView = "search" | "settings" | "notes" | "devotion";
+
 interface State {
   chapters: LoadedChapter[];
   current: CurrentChapter | null;
@@ -128,16 +138,13 @@ interface State {
   resizingPanel: boolean;
   compact: boolean;
   annotations: Annotation[];
-  notesOpen: boolean;
+  sidePanelOpen: boolean;
+  sidePanelView: SidePanelView;
   activeId: string | null;
   editorMode: "write" | "preview";
   saveState: string;
-  menu: "settings" | "chapters" | null;
+  menu: "chapters" | null;
   devotions: DevotionStore;
-  devotionOpen: boolean;
-  /* The rail stays in the flex layout until its exit spring settles. Without
-     this, closing removes the panel's slot before its visual exit can finish. */
-  devotionRailActive: boolean;
   devotionCalendarOpen: boolean;
   devotionDate: string;
   devotionMonth: string;
@@ -149,7 +156,6 @@ interface State {
   keyField: boolean;
   keyDraft: string;
   query: string;
-  spotlightOpen: boolean;
   results: SearchUiResult[];
   resultsOpen: boolean;
   resultsNote: string;
@@ -212,14 +218,13 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     resizingPanel: false,
     compact: false,
     annotations: [],
-    notesOpen: false,
+    sidePanelOpen: false,
+    sidePanelView: "search",
     activeId: null,
     editorMode: "write",
     saveState: "",
     menu: null,
     devotions: {},
-    devotionOpen: false,
-    devotionRailActive: false,
     devotionCalendarOpen: true,
     devotionDate: todayKey(),
     devotionMonth: monthKey(todayKey()),
@@ -231,7 +236,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     keyField: false,
     keyDraft: "",
     query: "",
-    spotlightOpen: false,
     results: [],
     resultsOpen: false,
     resultsNote: "",
@@ -249,12 +253,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   private readonly fileRef = createRef<HTMLInputElement>();
   private readonly spotlightInputRef = createRef<HTMLInputElement>();
-  private readonly searchTriggerRef = createRef<HTMLButtonElement>();
-  private readonly spotlightRef = createRef<HTMLDivElement>();
-  private readonly notesTriggerRef = createRef<HTMLButtonElement>();
-  private readonly notesPanelRef = createRef<HTMLDivElement>();
-  private readonly devotionTriggerRef = createRef<HTMLButtonElement>();
-  private readonly devotionPanelRef = createRef<HTMLDivElement>();
+  private readonly sidePanelTriggerRef = createRef<HTMLButtonElement>();
+  private readonly sidePanelRef = createRef<HTMLDivElement>();
   private anchor: number | null = null;
   private busy: "next" | "prev" | null = null;
   private clearSave?: ReturnType<typeof setTimeout>;
@@ -271,9 +271,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private searchAbort?: AbortController;
   private searchToken?: symbol;
   private untrackModality?: () => void;
-  private searchOpener: HTMLElement | null = null;
-  private notesOpener: HTMLElement | null = null;
-  private devotionOpener: HTMLElement | null = null;
+  private sidePanelOpener: HTMLElement | null = null;
   private devotionSaveTimer?: ReturnType<typeof setTimeout>;
   private clearDevotionSave?: ReturnType<typeof setTimeout>;
   private pendingDevotionUndo: DevotionEntry | null = null;
@@ -352,7 +350,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     this.searchAbort?.abort();
     this.devotionImportToken = undefined;
     esvSearchClient.close();
-    document.body.classList.remove("search-open");
     document.body.classList.remove("modal-open");
     document.body.classList.remove("resizing-panel");
   }
@@ -361,9 +358,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     this.applyCssVariables();
     document.body.classList.toggle(
       "modal-open",
-      this.state.spotlightOpen
-        || (this.state.narrow && this.state.notesOpen)
-        || (this.state.narrow && this.state.devotionOpen)
+      (this.state.narrow && this.state.sidePanelOpen)
         || this.state.menu === "chapters",
     );
     document.body.classList.toggle("resizing-panel", this.state.resizingPanel);
@@ -384,7 +379,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       }
     }
 
-    if (this.state.spotlightOpen) {
+    if (this.state.sidePanelOpen && this.state.sidePanelView === "search") {
       document.getElementById(this.activeSearchOptionId())?.scrollIntoView({ block: "nearest" });
     }
   }
@@ -521,7 +516,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   private patchChapter(key: string, patch: Partial<LoadedChapter>): void {
     this.setState((state) => ({
-      chapters: state.chapters.map((chapter) => chapter.key === key ? { ...chapter, ...patch } : chapter),
+      chapters: uniqueLoadedChapters(state.chapters)
+        .map((chapter) => chapter.key === key ? { ...chapter, ...patch } : chapter),
     }));
   }
 
@@ -533,7 +529,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   };
 
   private extend = async (direction: "next" | "prev"): Promise<void> => {
-    if (this.busy === direction) return;
+    // Scroll, wheel, and layout changes can request opposite edges within the
+    // same frame. Only one edge mutation may own the chapter list at a time;
+    // otherwise each direction can overwrite the other's lock and reinsert an
+    // already loaded chapter.
+    if (this.busy) return;
     const { chapters } = this.state;
     if (!chapters.length) return;
     const edge = direction === "next" ? chapters.at(-1) : chapters[0];
@@ -550,6 +550,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
     this.busy = direction;
     const key = `${reference.bookId}/${reference.chapter}`;
+    if (chapters.some((chapter) => chapter.key === key)) {
+      this.busy = null;
+      return;
+    }
     const entry: LoadedChapter = {
       key,
       bookId: reference.bookId,
@@ -558,10 +562,16 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       label: scripture.refLabel(reference.bookId, reference.chapter),
     };
     if (direction === "prev") this.anchor = document.documentElement.scrollHeight;
-    this.setState((state) => ({
-      chapters: direction === "next" ? [...state.chapters, entry] : [entry, ...state.chapters],
-      loadingMore: direction === "next",
-    }));
+    this.setState((state) => {
+      const uniqueChapters = uniqueLoadedChapters(state.chapters);
+      if (uniqueChapters.some((chapter) => chapter.key === key)) {
+        return { chapters: uniqueChapters, loadingMore: false };
+      }
+      return {
+        chapters: direction === "next" ? [...uniqueChapters, entry] : [entry, ...uniqueChapters],
+        loadingMore: direction === "next",
+      };
+    });
 
     try {
       const data = await scripture.getChapter(reference.bookId, reference.chapter);
@@ -661,13 +671,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const narrow = window.innerWidth < 1100;
     const compact = window.innerWidth < 760;
     if (narrow !== this.state.narrow || compact !== this.state.compact) {
-      this.setState((state) => ({
+      this.setState({
         narrow,
         compact,
-        // A narrow panel is a modal sheet, not a desktop rail. It does not
-        // need to retain a desktop layout slot when the viewport changes.
-        devotionRailActive: narrow ? false : state.devotionRailActive,
-      }));
+      });
     }
   };
 
@@ -769,8 +776,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   }
 
   private createAnnotation(draft: HighlightDraft, openPanel: boolean): void {
-    if (openPanel && !this.state.notesOpen) {
-      this.notesOpener = document.activeElement as HTMLElement | null;
+    if (openPanel && !this.state.sidePanelOpen) {
+      const activeElement = document.activeElement as HTMLElement | null;
+      this.sidePanelOpener = activeElement && activeElement !== document.body ? activeElement : null;
     }
     const id = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const now = new Date().toISOString();
@@ -799,14 +807,15 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       return {
         annotations,
         selectionToolbar: null,
-        notesOpen: openPanel || state.notesOpen,
+        sidePanelOpen: openPanel || state.sidePanelOpen,
+        sidePanelView: openPanel ? "notes" : state.sidePanelView,
         activeId: openPanel ? id : state.activeId,
         editorMode: "write",
       };
     }, () => {
       window.getSelection()?.removeAllRanges();
       if (openPanel) {
-        setTimeout(() => this.notesPanelRef.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus(), 60);
+        setTimeout(() => this.sidePanelRef.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus(), 60);
       }
     });
   }
@@ -902,30 +911,21 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }
     if (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.code === "Backslash") {
       event.preventDefault();
-      this.toggleDevotion();
+      this.openDevotion();
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
-      if (this.state.spotlightOpen) this.closeSpotlight();
-      else this.openSpotlight();
+      this.openSpotlight();
       return;
     }
     if (event.key === "Escape") {
-      if (this.state.spotlightOpen) this.closeSpotlight();
-      else if (this.state.selectionToolbar) this.setState({ selectionToolbar: null });
+      if (this.state.selectionToolbar) this.setState({ selectionToolbar: null });
       else if (this.state.menu) {
-        const dismissed = this.state.menu;
-        // The chapter picker hands focus back to its own trigger; the settings
-        // menu has no restore of its own, so its gear would keep focus and
-        // re-open on the next Enter.
-        this.setState({ menu: null }, () => {
-          if (dismissed === "settings") restoreFocus(null);
-        });
+        this.setState({ menu: null });
       }
+      else if (this.state.sidePanelOpen) this.closeSidePanel();
       else if (typing) target.blur();
-      else if (this.state.notesOpen) this.closeNotes();
-      else if (this.state.devotionOpen) this.closeDevotion();
       return;
     }
     if (typing) return;
@@ -947,22 +947,19 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   };
 
   private onDocumentMouseDown = (event: MouseEvent): void => {
-    if (!this.state.menu && !this.state.resultsOpen) return;
+    if (!this.state.menu) return;
     const target = event.target as Element | null;
-    // Menus portal to the body on compact, so "inside the header" is not a
-    // reliable test for "inside the menu" — check the surface itself too.
-    if (target?.closest?.(".menu")) return;
-    if (!target?.closest?.("header")) this.setState({ menu: null, resultsOpen: false });
+    if (target?.closest?.(".chapter-menu")) return;
+    if (!target?.closest?.("header")) this.setState({ menu: null });
   };
 
   private openSpotlight = (): void => {
-    if (this.state.spotlightOpen) {
+    if (this.state.sidePanelOpen && this.state.sidePanelView === "search") {
       this.spotlightInputRef.current?.focus();
       return;
     }
-    this.searchOpener = document.activeElement as HTMLElement | null;
-    document.body.classList.add("search-open");
-    this.setState({ menu: null, resultsOpen: false, spotlightOpen: true }, () => {
+    this.openSidePanel("search");
+    this.setState({ resultsOpen: false }, () => {
       setTimeout(() => this.spotlightInputRef.current?.focus(), 30);
     });
   };
@@ -972,7 +969,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       this.setState({ menu: null });
       return;
     }
-    if (this.state.spotlightOpen) this.closeSpotlight(false);
+    if (this.state.sidePanelOpen) this.closeSidePanel(false);
     this.setState({ menu: "chapters" });
   };
 
@@ -981,10 +978,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     if (this.searchIndicatorTimer) clearTimeout(this.searchIndicatorTimer);
     this.searchAbort?.abort();
     this.searchToken = undefined;
-    document.body.classList.remove("search-open");
-    const opener = this.searchOpener || this.searchTriggerRef.current;
     this.setState({
-      spotlightOpen: false,
+      sidePanelOpen: false,
       resultsOpen: false,
       query: "",
       results: [],
@@ -994,7 +989,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       activeSearchIndex: 0,
       referenceHint: null,
     });
-    if (restoreOpener) setTimeout(() => restoreFocus(opener), 0);
+    if (restoreOpener) this.restoreSidePanelFocus();
   };
 
   private searchCacheKey(query: string): string {
@@ -1166,10 +1161,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }
   };
 
-  private onSpotlightKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    this.trapFocus(event, this.spotlightRef.current);
-  };
-
   private trapFocus(event: ReactKeyboardEvent<HTMLElement>, container: HTMLElement | null): void {
     if (event.key !== "Tab") return;
     const focusables = container?.querySelectorAll<HTMLElement>(
@@ -1187,35 +1178,70 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }
   }
 
-  private onNotesKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (this.state.narrow) this.trapFocus(event, this.notesPanelRef.current);
+  private onSidePanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (this.state.narrow) this.trapFocus(event, this.sidePanelRef.current);
   };
 
-  private openNotes = (activeId: string | null = this.state.activeId): void => {
-    if (!this.state.notesOpen) this.notesOpener = document.activeElement as HTMLElement | null;
-    this.setState({ notesOpen: true, activeId, devotionOpen: false }, () => {
-      if (this.state.narrow) {
-        setTimeout(() => this.notesPanelRef.current?.querySelector<HTMLElement>("button")?.focus(), 30);
+  private restoreSidePanelFocus(): void {
+    const opener = this.sidePanelOpener;
+    this.sidePanelOpener = null;
+    const focusTarget = opener?.isConnected && opener !== document.body
+      ? opener
+      : this.sidePanelTriggerRef.current;
+    setTimeout(() => restoreFocus(focusTarget), 0);
+  }
+
+  private openSidePanel = (view: SidePanelView, activeId = this.state.activeId): void => {
+    const wasOpen = this.state.sidePanelOpen;
+    if (!wasOpen) {
+      const activeElement = document.activeElement as HTMLElement | null;
+      this.sidePanelOpener = activeElement && activeElement !== document.body ? activeElement : null;
+    }
+    this.setState((state) => ({
+      sidePanelOpen: true,
+      sidePanelView: view,
+      menu: null,
+      activeId: view === "notes" ? activeId : state.activeId,
+      devotionCalendarOpen: view === "devotion" ? true : state.devotionCalendarOpen,
+      devotionMonth: view === "devotion" ? monthKey(state.devotionDate) : state.devotionMonth,
+    }), () => {
+      if (view === "search") {
+        setTimeout(() => this.spotlightInputRef.current?.focus(), 30);
+      } else if (view === "notes" && activeId) {
+        setTimeout(() => this.sidePanelRef.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus(), 50);
+      } else if (this.state.narrow && !wasOpen) {
+        setTimeout(() => this.sidePanelRef.current?.querySelector<HTMLElement>("button")?.focus(), 30);
       }
     });
   };
 
-  private closeNotes = (): void => {
-    const opener = this.notesOpener;
-    this.setState({ notesOpen: false, activeId: null }, () => {
-      setTimeout(() => {
-        restoreFocus(opener?.isConnected ? opener : this.notesTriggerRef.current);
-      }, 0);
+  private closeSidePanel = (restoreOpener = true): void => {
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    if (this.searchIndicatorTimer) clearTimeout(this.searchIndicatorTimer);
+    this.searchAbort?.abort();
+    this.searchToken = undefined;
+    this.setState({
+      sidePanelOpen: false,
+      activeId: null,
+      resultsOpen: false,
+      query: "",
+      results: [],
+      resultsNote: "",
+      searching: false,
+      searchStale: false,
+      activeSearchIndex: 0,
+      referenceHint: null,
     });
+    if (restoreOpener) this.restoreSidePanelFocus();
   };
 
-  private toggleNotes = (): void => {
-    if (this.state.notesOpen) this.closeNotes();
-    else this.openNotes();
+  private toggleSidePanel = (): void => {
+    if (this.state.sidePanelOpen) this.closeSidePanel();
+    else this.openSidePanel(this.state.sidePanelView);
   };
 
-  private onDevotionKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (this.state.narrow) this.trapFocus(event, this.devotionPanelRef.current);
+  private openNotes = (activeId: string | null = this.state.activeId): void => {
+    this.openSidePanel("notes", activeId);
   };
 
   private toggleDevotionCalendar = (): void => {
@@ -1245,46 +1271,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   };
 
   private openDevotion = (): void => {
-    if (!this.state.devotionOpen) {
-      this.devotionOpener = document.activeElement as HTMLElement | null;
-    }
-    // Set notesOpen directly rather than calling closeNotes — that restores
-    // focus to the notes trigger and would fight the arriving panel.
-    this.setState((state) => ({
-      devotionOpen: true,
-      devotionRailActive: !state.narrow,
-      notesOpen: false,
-      activeId: null,
-      devotionCalendarOpen: true,
-      devotionMonth: monthKey(state.devotionDate),
-    }), () => {
-      if (this.state.narrow) {
-        setTimeout(() => this.devotionPanelRef.current?.querySelector<HTMLElement>("button")?.focus(), 30);
-      }
-    });
-  };
-
-  private closeDevotion = (): void => {
-    const opener = this.devotionOpener;
-    this.setState({ devotionOpen: false }, () => {
-      setTimeout(() => {
-        restoreFocus(opener?.isConnected ? opener : this.devotionTriggerRef.current);
-      }, 0);
-    });
-  };
-
-  private finishDevotionExit = (): void => {
-    // AnimatePresence can cancel an exit when the user reopens the panel.
-    // Re-checking state preserves that interruption instead of collapsing the
-    // reader's rail underneath a re-entering surface.
-    if (!this.state.devotionOpen && this.state.devotionRailActive) {
-      this.setState({ devotionRailActive: false });
-    }
-  };
-
-  private toggleDevotion = (): void => {
-    if (this.state.devotionOpen) this.closeDevotion();
-    else this.openDevotion();
+    this.openSidePanel("devotion");
   };
 
   private startDevotionPhoto = (photo: File, method: DevotionImportMethod): void => {
@@ -1706,11 +1693,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     void this.openAt(bookId, chapter);
   };
 
-  private readerOverlayInset(): number {
-    const { devotionOpen, devotionRailActive, narrow, preferences } = this.state;
-    return !narrow && (devotionOpen || devotionRailActive) ? preferences.panelWidth : 0;
-  }
-
   private renderChapterPicker(currentLabel: string, currentLabelZh: string): ReactNode {
     const {
       compact,
@@ -1720,10 +1702,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       narrowLanguage,
     } = this.state;
     const active = current || { bookId: "MAT", chapter: 1 };
-    // The picker surface is portaled to the document, while the desktop
-    // Devotion panel is a sibling rail. Reserve that rail's exact live width
-    // so the reader-only scrim does not dim or intercept it.
-    const readerScrimInset = this.readerOverlayInset();
     return (
       <ChapterPicker
         compact={compact}
@@ -1733,10 +1711,13 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         currentLabelZh={currentLabelZh}
         narrow={narrow}
         narrowLanguage={narrowLanguage}
-        onOpenChange={(open) => this.setState({ menu: open ? "chapters" : null })}
+        onOpenChange={(open) => {
+          if (open && this.state.sidePanelOpen) this.closeSidePanel(false);
+          this.setState({ menu: open ? "chapters" : null });
+        }}
         onPick={this.pickChapter}
         open={menu === "chapters"}
-        readerScrimInset={readerScrimInset}
+        readerScrimInset={0}
       />
     );
   }
@@ -1759,22 +1740,167 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     );
   }
 
-  private renderHeader(
-    currentLabel: string,
-    currentLabelZh: string,
-    sourceId: EnglishSourceId,
-  ): ReactNode {
+  private renderSettingsContent(sourceId: EnglishSourceId): ReactNode {
+    const { keyDraft, keyField, narrow, preferences } = this.state;
+    const sources: { id: EnglishSourceId; label: string; hint: string }[] = [
+      { id: "web", label: "World English Bible", hint: "Public domain" },
+      { id: "mdesv", label: "ESV — hosted copy", hint: "mdbible plain text, personal use" },
+      {
+        id: "esvapi",
+        label: "ESV — api.esv.org",
+        hint: scripture.getEsvKey() ? "Using your saved key" : "Needs your own key",
+      },
+    ];
+
+    return (
+      <div className="notes-content utility-settings">
+        {narrow && (
+          <section className="settings-section">
+            <p className="menu-eyebrow">Translation</p>
+            {this.renderTranslationSwitch()}
+          </section>
+        )}
+
+        {!narrow && (
+          <section className="settings-section">
+            <p className="menu-eyebrow">Language display</p>
+            {([
+              ["both", "Both, side by side"],
+              ["en", "English only"],
+              ["zh", "Chinese only"],
+            ] as [LanguageMode, string][]).map(([mode, label]) => (
+              <button
+                aria-checked={preferences.langMode === mode}
+                className="menu-choice"
+                key={mode}
+                onClick={() => this.setPreferences({ langMode: mode })}
+                role="radio"
+                type="button"
+              >
+                {label}<span aria-hidden="true">{preferences.langMode === mode ? "●" : ""}</span>
+              </button>
+            ))}
+          </section>
+        )}
+
+        <section className="settings-section">
+          <p className="menu-eyebrow">English source</p>
+          {sources.map((source) => (
+            <button
+              aria-checked={sourceId === source.id}
+              className="source-choice"
+              key={source.id}
+              onClick={() => this.selectSource(source.id)}
+              role="radio"
+              type="button"
+            >
+              <span><span>{source.label}</span><small>{source.hint}</small></span>
+              <span aria-hidden="true" className="choice-dot">{sourceId === source.id ? "●" : ""}</span>
+            </button>
+          ))}
+          {keyField ? (
+            <>
+              <div className="key-entry">
+                <input
+                  aria-label="ESV API key"
+                  onChange={(event) => this.setState({ keyDraft: event.target.value })}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      this.commitKey();
+                    }
+                  }}
+                  placeholder="Paste your ESV API key"
+                  type="password"
+                  value={keyDraft}
+                />
+                <button onClick={this.commitKey} type="button">Use</button>
+              </div>
+              <p className="key-note">
+                Stays in this browser only. Free keys for non-commercial use at{" "}
+                <a href="https://api.esv.org/" rel="noopener noreferrer" target="_blank">api.esv.org</a>.
+              </p>
+            </>
+          ) : (
+            <div className="key-actions">
+              <button onClick={() => this.setState({ keyField: true, keyDraft: "" })} type="button">
+                {scripture.getEsvKey() ? "Replace API key" : "Add an ESV API key"}
+              </button>
+              {scripture.getEsvKey() && (
+                <button
+                  className="danger-quiet"
+                  onClick={() => {
+                    scripture.setEsvKey("");
+                    scripture.setEnglishSource("web");
+                    this.setState({ keyField: false, keyDraft: "" });
+                    this.reloadCurrent("Key forgotten — back to the public-domain text.");
+                  }}
+                  type="button"
+                >
+                  Forget key
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section className="settings-section">
+          <p className="menu-eyebrow">Text size</p>
+          <div className="size-control">
+            <button
+              aria-label="Decrease text size"
+              onClick={() => {
+                const index = SIZES.indexOf(preferences.size);
+                this.setPreferences({ size: SIZES[Math.max(0, (index < 0 ? 3 : index) - 1)] });
+              }}
+              type="button"
+            >A−</button>
+            <div className="size-track"><span /></div>
+            <button
+              aria-label="Increase text size"
+              onClick={() => {
+                const index = SIZES.indexOf(preferences.size);
+                this.setPreferences({ size: SIZES[Math.min(SIZES.length - 1, (index < 0 ? 3 : index) + 1)] });
+              }}
+              type="button"
+            >A+</button>
+          </div>
+          <p className="menu-eyebrow">Line spacing</p>
+          <div aria-label="Line spacing" className="spacing-control" role="group">
+            {SPACING.map((option) => (
+              <button
+                aria-pressed={Math.abs(preferences.lh - option.value) < 0.01}
+                className={Math.abs(preferences.lh - option.value) < 0.01 ? "active" : ""}
+                key={option.label}
+                onClick={() => this.setPreferences({ lh: option.value })}
+                type="button"
+              >{option.label}</button>
+            ))}
+          </div>
+          <label className="toggle-row">
+            Verse numbers
+            <input
+              checked={preferences.showVerseNumbers}
+              onChange={() => this.setPreferences({ showVerseNumbers: !preferences.showVerseNumbers })}
+              type="checkbox"
+            />
+          </label>
+          <label className="toggle-row">
+            Section headings
+            <input
+              checked={preferences.showHeadings}
+              onChange={() => this.setPreferences({ showHeadings: !preferences.showHeadings })}
+              type="checkbox"
+            />
+          </label>
+        </section>
+      </div>
+    );
+  }
+
+  private renderSearchContent(): ReactNode {
     const {
       activeSearchIndex,
-      annotations,
-      compact,
-      devotionOpen,
-      keyDraft,
-      keyField,
-      menu,
-      narrow,
-      notesOpen,
-      preferences,
       query,
       referenceHint,
       results,
@@ -1782,30 +1908,138 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       resultsOpen,
       searchStale,
       searching,
-      spotlightOpen,
     } = this.state;
-    const sources: { id: EnglishSourceId; label: string; hint: string }[] = [
-      { id: "web", label: "World English Bible", hint: "Public domain" },
-    { id: "mdesv", label: "ESV — hosted copy", hint: "mdbible plain text, personal use" },
-      {
-        id: "esvapi",
-        label: "ESV — api.esv.org",
-        hint: scripture.getEsvKey() ? "Using your saved key" : "Needs your own key",
-      },
-    ];
-    const highlightCount = annotations.filter((annotation) => annotation.kind === "highlight").length;
-    const readerOverlayInset = this.readerOverlayInset();
-    const readerOverlayStyle = readerOverlayInset > 0 ? { right: readerOverlayInset } : undefined;
-    const readerOverlaySurfaceStyle = readerOverlayInset > 0
-      ? { width: `min(548px, calc(100vw - ${readerOverlayInset + 32}px))` }
-      : undefined;
 
     return (
-      <>
-        <header
-          className="app-header"
-          inert={spotlightOpen || (narrow && (notesOpen || devotionOpen)) || (compact && menu === "chapters") ? true : undefined}
-        >
+      <div className="utility-search">
+        <div className="spotlight-head">
+          <form className="spotlight-form" onSubmit={this.handleSearchSubmit} role="search">
+            <span aria-hidden="true" className="search-icon" />
+            <input
+              aria-activedescendant={this.searchOptionCount() ? this.activeSearchOptionId() : undefined}
+              aria-autocomplete="list"
+              aria-controls="search-results"
+              aria-expanded={resultsOpen}
+              aria-label="Search a passage reference or keyword"
+              onChange={(event) => {
+                this.setState({ query: event.target.value });
+                this.runSearch(event.target.value);
+              }}
+              onKeyDown={this.onSearchInputKeyDown}
+              placeholder="Search a passage or keyword"
+              ref={this.spotlightInputRef}
+              role="combobox"
+              spellCheck={false}
+              type="search"
+              value={query}
+            />
+            {query && (
+              <button aria-label="Clear search" className="search-clear" onClick={this.clearSearch} type="button">
+                <svg aria-hidden="true" fill="none" height="13" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" viewBox="0 0 24 24" width="13">
+                  <path d="m7.5 7.5 9 9m0-9-9 9" />
+                </svg>
+              </button>
+            )}
+          </form>
+        </div>
+
+        <p aria-live="polite" className="sr-only" role="status">
+          {searching
+            ? "Searching the Bible"
+            : referenceHint
+              ? `Reference ready: ${referenceHint.label}`
+              : results.length
+                ? `${results.length} ESV search results`
+                : resultsNote}
+        </p>
+
+        {!query && (
+          <div className="search-welcome utility-search-welcome">
+            <p>Find a passage, chapter, or word without leaving the reader.</p>
+            <p className="search-shortcuts"><kbd>↑</kbd><kbd>↓</kbd> to move <span /> <kbd>↵</kbd> to open</p>
+          </div>
+        )}
+
+        {searching && <span aria-hidden="true" className="search-progress" />}
+
+        {resultsOpen && (
+          <div
+            aria-busy={searching}
+            aria-label="Search results"
+            className={`spotlight-results utility-search-results${searchStale ? " stale" : ""}`}
+            id="search-results"
+            role="listbox"
+          >
+            {referenceHint && (
+              <button
+                aria-selected={activeSearchIndex === 0}
+                className={`reference-result${activeSearchIndex === 0 ? " active" : ""}`}
+                id="search-option-0"
+                onClick={() => {
+                  this.closeSpotlight();
+                  void this.openAt(referenceHint.bookId, referenceHint.chapter, { verse: referenceHint.verse });
+                }}
+                onMouseEnter={() => this.setState({ activeSearchIndex: 0 })}
+                role="option"
+                tabIndex={-1}
+                type="button"
+              >
+                <span className="reference-arrow" aria-hidden="true">→</span>
+                <span>
+                  <span className="go-to">Open passage</span>
+                  <span className="result-ref-large">{referenceHint.label}</span>
+                  <span className="result-ref-zh">{referenceHint.labelZh}</span>
+                </span>
+                <kbd aria-hidden="true">↵</kbd>
+              </button>
+            )}
+            {results.map((result, index) => {
+              const optionIndex = index + (referenceHint ? 1 : 0);
+              return (
+                <button
+                  aria-selected={activeSearchIndex === optionIndex}
+                  className={`search-result${activeSearchIndex === optionIndex ? " active" : ""}`}
+                  id={`search-option-${optionIndex}`}
+                  key={`${result.ref}-${result.verse}`}
+                  onClick={result.go}
+                  onMouseEnter={() => this.setState({ activeSearchIndex: optionIndex })}
+                  role="option"
+                  tabIndex={-1}
+                  type="button"
+                >
+                  <span className="result-meta"><span>{result.ref}</span></span>
+                  <span className="result-english">{this.highlightSearchText(result.en)}</span>
+                </button>
+              );
+            })}
+            {searching && !results.length && (
+              <div aria-hidden="true" className="search-loading-state"><span /><span /><span /></div>
+            )}
+            {resultsNote && (
+              <div className="results-note">
+                <p>{resultsNote}</p>
+                {resultsNote.startsWith("Search couldn’t") && (
+                  <button onClick={this.retrySearch} type="button">Retry</button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  private renderHeader(
+    currentLabel: string,
+    currentLabelZh: string,
+  ): ReactNode {
+    const { compact, menu, narrow, sidePanelOpen } = this.state;
+
+    return (
+      <header
+        className="app-header"
+        inert={(narrow && sidePanelOpen) || (compact && menu === "chapters") ? true : undefined}
+      >
         <div className="header-grid">
           <div className="brand-block">
             <a
@@ -1822,368 +2056,23 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
           {this.renderChapterPicker(currentLabel, currentLabelZh)}
 
-          <div className="header-actions">
-            {narrow && !compact && this.renderTranslationSwitch()}
-
-            <button
-              aria-haspopup="dialog"
-              aria-label="Search passages and keywords"
-              className="icon-button search-trigger"
-              onClick={this.openSpotlight}
-              ref={this.searchTriggerRef}
-              title="Search (⌘K)"
-              type="button"
-            >
-              <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" viewBox="0 0 24 24" width="15">
-                <circle cx="11" cy="11" r="6.5" />
-                <path d="m16 16 4 4" />
-              </svg>
-            </button>
-
-            <div className="menu-wrap">
-              <button
-                aria-expanded={menu === "settings"}
-                aria-haspopup="menu"
-                aria-label="Display settings"
-                className="icon-button"
-                onClick={() => this.setState({ menu: menu === "settings" ? null : "settings" })}
-                type="button"
-              >
-                <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24" width="15">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                </svg>
-              </button>
-              <SurfacePortal enabled={compact}>
-              <AnimatePresence>
-              {menu === "settings" && (
-                <>
-                {compact && <div aria-hidden="true" className="reader-scrim compact-menu-backdrop" onClick={() => this.setState({ menu: null })} />}
-                <FluidSurface
-                  ariaLabel="Display settings"
-                  className="menu settings-menu"
-                  edge={compact ? "bottom" : "popover"}
-                  key="settings-menu"
-                  onClick={(event) => event.stopPropagation()}
-                  onDismiss={() => this.setState({ menu: null })}
-                  role="menu"
-                  showHandle={compact}
-                >
-                  <div className="settings-section">
-                    {!narrow && (
-                      <>
-                      <p className="menu-eyebrow">Language display</p>
-                      {([
-                        ["both", "Both, side by side"],
-                        ["en", "English only"],
-                        ["zh", "Chinese only"],
-                      ] as [LanguageMode, string][]).map(([mode, label]) => (
-                        <button
-                          aria-checked={preferences.langMode === mode}
-                          className="menu-choice"
-                          key={mode}
-                          onClick={() => this.setPreferences({ langMode: mode })}
-                          role="menuitemradio"
-                          type="button"
-                        >
-                          {label}<span>{preferences.langMode === mode ? "●" : ""}</span>
-                        </button>
-                      ))}
-                      </>
-                    )}
-                      <div className={`source-section${narrow ? " first" : ""}`}>
-                        <p className="menu-eyebrow">English source</p>
-                        {sources.map((source) => (
-                          <button
-                            aria-checked={sourceId === source.id}
-                            className="source-choice"
-                            key={source.id}
-                            onClick={() => this.selectSource(source.id)}
-                            role="menuitemradio"
-                            type="button"
-                          >
-                            <span>
-                              <span>{source.label}</span>
-                              <small>{source.hint}</small>
-                            </span>
-                            <span className="choice-dot">{sourceId === source.id ? "●" : ""}</span>
-                          </button>
-                        ))}
-                        {keyField ? (
-                          <>
-                            <div className="key-entry">
-                              <input
-                                aria-label="ESV API key"
-                                onChange={(event) => this.setState({ keyDraft: event.target.value })}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") {
-                                    event.preventDefault();
-                                    this.commitKey();
-                                  }
-                                }}
-                                placeholder="Paste your ESV API key"
-                                type="password"
-                                value={keyDraft}
-                              />
-                              <button onClick={this.commitKey} type="button">Use</button>
-                            </div>
-                            <p className="key-note">
-                              Stays in this browser only. Free keys for non-commercial use at{" "}
-                              <a href="https://api.esv.org/" rel="noopener noreferrer" target="_blank">api.esv.org</a>.
-                            </p>
-                          </>
-                        ) : (
-                          <div className="key-actions">
-                            <button onClick={() => this.setState({ keyField: true, keyDraft: "" })} type="button">
-                              {scripture.getEsvKey() ? "Replace API key" : "Add an ESV API key"}
-                            </button>
-                            {scripture.getEsvKey() && (
-                              <button
-                                className="danger-quiet"
-                                onClick={() => {
-                                  scripture.setEsvKey("");
-                                  scripture.setEnglishSource("web");
-                                  this.setState({ keyField: false, keyDraft: "" });
-                                  this.reloadCurrent("Key forgotten — back to the public-domain text.");
-                                }}
-                                type="button"
-                              >
-                                Forget key
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  <div className="settings-section">
-                    <p className="menu-eyebrow">Text size</p>
-                    <div className="size-control">
-                      <button
-                        aria-label="Decrease text size"
-                        onClick={() => {
-                          const index = SIZES.indexOf(preferences.size);
-                          this.setPreferences({ size: SIZES[Math.max(0, (index < 0 ? 3 : index) - 1)] });
-                        }}
-                        type="button"
-                      >A−</button>
-                      <div className="size-track"><span /></div>
-                      <button
-                        aria-label="Increase text size"
-                        onClick={() => {
-                          const index = SIZES.indexOf(preferences.size);
-                          this.setPreferences({ size: SIZES[Math.min(SIZES.length - 1, (index < 0 ? 3 : index) + 1)] });
-                        }}
-                        type="button"
-                      >A+</button>
-                    </div>
-                    <p className="menu-eyebrow">Line spacing</p>
-                    <div aria-label="Line spacing" className="spacing-control" role="group">
-                      {SPACING.map((option) => (
-                        <button
-                          aria-pressed={Math.abs(preferences.lh - option.value) < 0.01}
-                          className={Math.abs(preferences.lh - option.value) < 0.01 ? "active" : ""}
-                          key={option.label}
-                          onClick={() => this.setPreferences({ lh: option.value })}
-                          type="button"
-                        >{option.label}</button>
-                      ))}
-                    </div>
-                    <label className="toggle-row">
-                      Verse numbers
-                      <input
-                        checked={preferences.showVerseNumbers}
-                        onChange={() => this.setPreferences({ showVerseNumbers: !preferences.showVerseNumbers })}
-                        type="checkbox"
-                      />
-                    </label>
-                    <label className="toggle-row">
-                      Section headings
-                      <input
-                        checked={preferences.showHeadings}
-                        onChange={() => this.setPreferences({ showHeadings: !preferences.showHeadings })}
-                        type="checkbox"
-                      />
-                    </label>
-                  </div>
-                </FluidSurface>
-                </>
-              )}
-              </AnimatePresence>
-              </SurfacePortal>
-            </div>
-
-            <button
-              aria-expanded={notesOpen}
-              aria-label="Notes"
-              className="icon-button notes-button"
-              onClick={this.toggleNotes}
-              ref={this.notesTriggerRef}
-              type="button"
-            >
-              <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24" width="15">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-                <path d="M9 13h6" />
-                <path d="M9 17h6" />
-              </svg>
-              {highlightCount > 0 && <span>{highlightCount}</span>}
-            </button>
-
-            <DevotionTrigger
-              hasEntryToday={hasContent(this.state.devotions[todayKey()])}
-              onPress={this.toggleDevotion}
-              open={devotionOpen}
-              triggerRef={this.devotionTriggerRef}
-            />
-          </div>
-        </div>
-        {narrow && compact && <div className="translation-row">{this.renderTranslationSwitch()}</div>}
-      </header>
-
-      <SurfacePortal>
-      <AnimatePresence>
-      {spotlightOpen && (
-        <FluidBackdrop
-          className="reader-scrim spotlight-backdrop"
-          onDismiss={this.closeSpotlight}
-          style={readerOverlayStyle}
-        >
-          <FluidSurface
-            ariaLabel="Search"
-            ariaModal
-            className="spotlight"
-            edge={compact ? "bottom" : "center"}
-            key="search-surface"
-            onClick={(event) => event.stopPropagation()}
-            onDismiss={this.closeSpotlight}
-            onKeyDown={this.onSpotlightKeyDown}
-            ref={this.spotlightRef}
-            role="dialog"
-            showHandle={compact}
-            style={readerOverlaySurfaceStyle}
+          <button
+            aria-expanded={sidePanelOpen}
+            aria-haspopup={narrow ? "dialog" : undefined}
+            aria-label={sidePanelOpen ? "Close Bible tools" : "Open Bible tools"}
+            className="icon-button tools-panel-trigger"
+            onClick={this.toggleSidePanel}
+            ref={this.sidePanelTriggerRef}
+            title="Bible tools"
+            type="button"
           >
-            <div className="spotlight-head">
-              <form className="spotlight-form" onSubmit={this.handleSearchSubmit} role="search">
-                <span aria-hidden="true" className="search-icon" />
-                <input
-                  aria-activedescendant={this.searchOptionCount() ? this.activeSearchOptionId() : undefined}
-                  aria-autocomplete="list"
-                  aria-controls="search-results"
-                  aria-expanded={resultsOpen}
-                  aria-label="Search a passage reference or keyword"
-                  onChange={(event) => {
-                    this.setState({ query: event.target.value });
-                    this.runSearch(event.target.value);
-                  }}
-                  onKeyDown={this.onSearchInputKeyDown}
-                  placeholder="Search a passage or keyword"
-                  ref={this.spotlightInputRef}
-                  role="combobox"
-                  spellCheck={false}
-                  type="search"
-                  value={query}
-                />
-                {query && (
-                  <button aria-label="Clear search" className="search-clear" onClick={this.clearSearch} type="button">
-                    <svg aria-hidden="true" fill="none" height="13" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" viewBox="0 0 24 24" width="13">
-                      <path d="m7.5 7.5 9 9m0-9-9 9" />
-                    </svg>
-                  </button>
-                )}
-              </form>
-            </div>
-
-            <p aria-live="polite" className="sr-only" role="status">
-              {searching
-                ? "Searching the Bible"
-                : referenceHint
-                  ? `Reference ready: ${referenceHint.label}`
-                  : results.length
-                    ? `${results.length} ESV search results`
-                    : resultsNote}
-            </p>
-
-            {!query && (
-              <div className="search-welcome">
-                <p className="search-shortcuts"><kbd>↑</kbd><kbd>↓</kbd> to move <span /> <kbd>↵</kbd> to open</p>
-              </div>
-            )}
-
-            {searching && <span aria-hidden="true" className="search-progress" />}
-
-            {resultsOpen && (
-              <div
-                aria-busy={searching}
-                aria-label="Search results"
-                className={`spotlight-results${searchStale ? " stale" : ""}`}
-                id="search-results"
-                role="listbox"
-              >
-                {referenceHint && (
-                  <button
-                    aria-selected={activeSearchIndex === 0}
-                    className={`reference-result${activeSearchIndex === 0 ? " active" : ""}`}
-                    id="search-option-0"
-                    onClick={() => {
-                      this.closeSpotlight();
-                      void this.openAt(referenceHint.bookId, referenceHint.chapter, { verse: referenceHint.verse });
-                    }}
-                    onMouseEnter={() => this.setState({ activeSearchIndex: 0 })}
-                    role="option"
-                    tabIndex={-1}
-                    type="button"
-                  >
-                    <span className="reference-arrow" aria-hidden="true">→</span>
-                    <span>
-                      <span className="go-to">Open passage</span>
-                      <span className="result-ref-large">{referenceHint.label}</span>
-                      <span className="result-ref-zh">{referenceHint.labelZh}</span>
-                    </span>
-                    <kbd aria-hidden="true">↵</kbd>
-                  </button>
-                )}
-                {results.map((result, index) => {
-                  const optionIndex = index + (referenceHint ? 1 : 0);
-                  return (
-                    <button
-                      aria-selected={activeSearchIndex === optionIndex}
-                      className={`search-result${activeSearchIndex === optionIndex ? " active" : ""}`}
-                      id={`search-option-${optionIndex}`}
-                      key={`${result.ref}-${result.verse}`}
-                      onClick={result.go}
-                      onMouseEnter={() => this.setState({ activeSearchIndex: optionIndex })}
-                      role="option"
-                      tabIndex={-1}
-                      type="button"
-                    >
-                      <span className="result-meta">
-                        <span>{result.ref}</span>
-                      </span>
-                      <span className="result-english">{this.highlightSearchText(result.en)}</span>
-                    </button>
-                  );
-                })}
-                {searching && !results.length && (
-                  <div aria-hidden="true" className="search-loading-state">
-                    <span /><span /><span />
-                  </div>
-                )}
-                {resultsNote && (
-                  <div className="results-note">
-                    <p>{resultsNote}</p>
-                    {resultsNote.startsWith("Search couldn’t") && (
-                      <button onClick={this.retrySearch} type="button">Retry</button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </FluidSurface>
-        </FluidBackdrop>
-      )}
-      </AnimatePresence>
-      </SurfacePortal>
-      </>
+            <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24" width="16">
+              <rect height="17" rx="2.5" width="19" x="2.5" y="3.5" />
+              <path d="M15.5 3.5v17M18.5 9h0M18.5 12h0M18.5 15h0" />
+            </svg>
+          </button>
+        </div>
+      </header>
     );
   }
 
@@ -2251,10 +2140,16 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   private renderChapter(chapter: LoadedChapter, first: boolean, showEnglish: boolean, showChinese: boolean): ReactNode {
     const titleClass = first ? "chapter-title first" : "chapter-title";
+    const titleLabelZh = scripture.refLabelZh(chapter.bookId, chapter.chapter);
     if (chapter.status !== "ready" || !chapter.data) {
       return (
         <div className="chapter-block" key={chapter.key}>
-          <div className={titleClass} data-ck={chapter.key}><h2>{chapter.label}</h2></div>
+          <div className={titleClass} data-ck={chapter.key}>
+            <h2>
+              {showEnglish && <span>{chapter.label}</span>}
+              {showChinese && <span className="chapter-title-zh" lang="zh">{titleLabelZh}</span>}
+            </h2>
+          </div>
           {chapter.status === "error" ? (
             <div className="chapter-error" role="alert">
               <span>This chapter didn’t load.</span>
@@ -2276,7 +2171,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           if (block.type === "title") {
             return (
               <div className={titleClass} data-ck={chapter.key} key={block.id}>
-                <h2>{block.text}</h2>
+                <h2>
+                  {showEnglish && <span>{block.text}</span>}
+                  {showChinese && <span className="chapter-title-zh" lang="zh">{titleLabelZh}</span>}
+                </h2>
               </div>
             );
           }
@@ -2308,9 +2206,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     );
   }
 
-  private renderNotes(currentLabel: string, englishLabel: string): ReactNode {
-    const { activeId, annotations, current, editorMode, narrow, saveState } = this.state;
-    if (!this.state.notesOpen) return null;
+  private renderNotesContent(currentLabel: string, englishLabel: string): ReactNode {
+    const { activeId, annotations, current, editorMode, saveState } = this.state;
     const currentKey = current ? `${current.bookId}/${current.chapter}` : null;
     const active = activeId
       ? annotations.find((annotation): annotation is HighlightAnnotation =>
@@ -2319,32 +2216,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       : null;
     const chapterAnnotations = currentKey ? this.annotationsForChapter(currentKey) : [];
 
-    const panel = (
-      <FluidSurface
-        ariaLabel="Notes"
-        ariaModal={narrow}
-        className="notes-panel"
-        draggable={narrow}
-        edge="right"
-        expandWidth={narrow ? undefined : this.state.preferences.panelWidth}
-        key="notes-panel"
-        onClick={(event) => event.stopPropagation()}
-        onDismiss={this.closeNotes}
-        onKeyDown={this.onNotesKeyDown}
-        ref={this.notesPanelRef}
-        role={narrow ? "dialog" : "complementary"}
-        showHandle={narrow}
-        transitionOverride={this.state.resizingPanel ? { duration: 0 } : undefined}
-      >
-        {this.renderPanelResizer()}
-        <div className="notes-header">
-          <span>Notes · {currentLabel}</span>
-          <button
-            aria-label="Close notes"
-            onClick={this.closeNotes}
-            type="button"
-          >×</button>
-        </div>
+    return (
+      <div className="notes-panel-view">
         <div className="notes-content">
           {active ? (
             <div>
@@ -2401,7 +2274,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             </div>
           ) : (
             <div>
-              <p className="notes-eyebrow">Chapter note</p>
+              <p className="notes-eyebrow">Chapter note · {currentLabel}</p>
               <textarea
                 aria-label="Chapter note"
                 className="chapter-note"
@@ -2446,11 +2319,132 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           <button onClick={this.exportBackup} type="button">Export backup</button>
           <button onClick={() => this.fileRef.current?.click()} type="button">Import</button>
         </div>
+      </div>
+    );
+  }
+
+  private renderSidePanelIcon(view: SidePanelView): ReactNode {
+    if (view === "search") {
+      return <svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></svg>;
+    }
+    if (view === "settings") {
+      return <svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M10 17h10M4 17h2" /><circle cx="16" cy="7" r="2" /><circle cx="8" cy="17" r="2" /></svg>;
+    }
+    if (view === "notes") {
+      return <svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><path d="M6 3.5h9l3 3V20H6z" /><path d="M14.5 3.5V7H18M9 11h6M9 15h6" /></svg>;
+    }
+    return <svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><rect height="16" rx="2.5" width="18" x="3" y="5" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>;
+  }
+
+  private renderSidePanel(
+    currentLabel: string,
+    englishLabel: string,
+    sourceId: EnglishSourceId,
+  ): ReactNode {
+    const { narrow, sidePanelOpen, sidePanelView } = this.state;
+    if (!sidePanelOpen) return null;
+
+    const destinations: { id: SidePanelView; label: string; shortcut?: string }[] = [
+      { id: "search", label: "Search", shortcut: "⌘K" },
+      { id: "settings", label: "Display" },
+      { id: "notes", label: "Notes" },
+      { id: "devotion", label: "Devotion", shortcut: "⌘\\" },
+    ];
+    const activeLabel = destinations.find((destination) => destination.id === sidePanelView)?.label || "Tools";
+    let content: ReactNode;
+
+    if (sidePanelView === "search") content = this.renderSearchContent();
+    else if (sidePanelView === "settings") content = this.renderSettingsContent(sourceId);
+    else if (sidePanelView === "notes") content = this.renderNotesContent(currentLabel, englishLabel);
+    else {
+      content = (
+        <DevotionPanel
+          calendarOpen={this.state.devotionCalendarOpen}
+          date={this.state.devotionDate}
+          entry={this.devotionEntry(this.state.devotionDate)}
+          hasEntry={(dateKey) => hasContent(this.state.devotions[dateKey])}
+          importUi={this.state.devotionImport}
+          mode={this.state.devotionMode}
+          month={this.state.devotionMonth}
+          monthDirection={this.state.devotionMonthDir}
+          onAnswerChange={this.setDevotionAnswer}
+          onCancelImport={this.cancelDevotionImport}
+          onClear={this.clearDevotionEntry}
+          onConfirmReplace={this.confirmDevotionReplace}
+          onEditImported={this.editImportedDevotion}
+          onModeChange={(devotionMode) => this.setState({ devotionMode })}
+          onPhotoSelected={this.startDevotionPhoto}
+          onPickDate={this.pickDevotionDate}
+          onSaveImport={this.saveDevotionImport}
+          onStepMonth={this.stepDevotionMonth}
+          onToggleCalendar={this.toggleDevotionCalendar}
+          onUpdateImportDraft={this.updateDevotionImport}
+          saveState={this.state.devotionSaveState}
+        />
+      );
+    }
+
+    const panel = (
+      <FluidSurface
+        ariaLabel={`Bible tools: ${activeLabel}`}
+        ariaModal={narrow}
+        className="notes-panel utility-panel"
+        draggable={narrow}
+        edge="right"
+        expandWidth={narrow ? undefined : this.state.preferences.panelWidth}
+        key="utility-panel"
+        onClick={(event) => event.stopPropagation()}
+        onDismiss={this.closeSidePanel}
+        onKeyDown={this.onSidePanelKeyDown}
+        ref={this.sidePanelRef}
+        role={narrow ? "dialog" : "complementary"}
+        showHandle={narrow}
+        transitionOverride={this.state.resizingPanel ? { duration: 0 } : undefined}
+      >
+        {this.renderPanelResizer()}
+        <div className="utility-panel-header">
+          <div>
+            <p>Bible tools</p>
+            <h2>{activeLabel}</h2>
+          </div>
+          <button aria-label="Close Bible tools" onClick={() => this.closeSidePanel()} type="button">×</button>
+        </div>
+
+        <nav aria-label="Bible tools" className="utility-panel-nav">
+          {destinations.map((destination) => (
+            <button
+              aria-current={sidePanelView === destination.id ? "page" : undefined}
+              className={sidePanelView === destination.id ? "active" : ""}
+              key={destination.id}
+              onClick={() => this.openSidePanel(destination.id)}
+              type="button"
+            >
+              {this.renderSidePanelIcon(destination.id)}
+              <span>{destination.label}</span>
+              {destination.shortcut && <kbd>{destination.shortcut}</kbd>}
+            </button>
+          ))}
+        </nav>
+
+        <div className="utility-panel-stage">
+          <AnimatePresence initial={false}>
+            <motion.div
+              animate={{ opacity: 1 }}
+              className={`utility-panel-view ${sidePanelView}`}
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              key={sidePanelView}
+              transition={{ duration: 0.14, ease: [0.2, 0.8, 0.2, 1] }}
+            >
+              {content}
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </FluidSurface>
     );
 
     return narrow ? (
-      <FluidBackdrop className="notes-backdrop" onDismiss={this.closeNotes}>
+      <FluidBackdrop className="notes-backdrop utility-backdrop" onDismiss={() => this.closeSidePanel()}>
         {panel}
       </FluidBackdrop>
     ) : panel;
@@ -2461,18 +2455,14 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       chapters,
       compact,
       current,
-      devotionOpen,
-      devotionRailActive,
       menu,
       narrow,
-      notesOpen,
       selectionToolbar,
+      sidePanelOpen,
       sourceId,
-      spotlightOpen,
       toast,
     } = this.state;
     const compactPickerOpen = compact && menu === "chapters";
-    const devotionRailVisible = !narrow && (devotionOpen || devotionRailActive);
     const languages = this.languages();
     const showEnglish = languages.includes("en");
     const showChinese = languages.includes("zh");
@@ -2484,28 +2474,19 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
     return (
       <FluidProvider>
-      <div className={`app-shell${devotionRailVisible ? " devotion-rail-active" : ""}`}>
+      <div className="app-shell">
         <div className="reader-workspace">
-          {this.renderHeader(currentLabel, currentLabelZh, sourceId)}
+          {this.renderHeader(currentLabel, currentLabelZh)}
           <div
-            aria-hidden={spotlightOpen || compactPickerOpen ? true : undefined}
+            aria-hidden={compactPickerOpen ? true : undefined}
             className="reader-with-notes"
-            inert={spotlightOpen || compactPickerOpen ? true : undefined}
+            inert={compactPickerOpen ? true : undefined}
           >
             <main
-              aria-hidden={narrow && (notesOpen || devotionOpen) ? true : undefined}
+              aria-hidden={narrow && sidePanelOpen ? true : undefined}
               className={`reader${this.state.atCanonEnd ? " canon-end" : ""}`}
-              inert={narrow && (notesOpen || devotionOpen) ? true : undefined}
+              inert={narrow && sidePanelOpen ? true : undefined}
             >
-              {/* Sits outside .reader-inner so its sticky background spans the
-                  reader column exactly. Inside, it needed a 100vw bleed to reach
-                  the edges, which also carried it across the side panel. */}
-              <div className="translation-labels">
-                <div className="translation-labels-inner">
-                  {showEnglish && <span>{englishLabel}</span>}
-                  {showChinese && <span lang="zh">和合本</span>}
-                </div>
-              </div>
               <div className="reader-inner">
                 {this.state.atCanonStart && <p className="canon-edge">Beginning of the canon</p>}
                 {chapters.map((chapter, index) =>
@@ -2516,43 +2497,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                 {!esvStatus.ok && <p className="source-notice" role="status">{esvStatus.message}</p>}
               </div>
             </main>
-            <AnimatePresence>{this.renderNotes(currentLabel, englishLabel)}</AnimatePresence>
+            <AnimatePresence>{this.renderSidePanel(currentLabel, englishLabel, sourceId)}</AnimatePresence>
           </div>
         </div>
-        <AnimatePresence onExitComplete={this.finishDevotionExit}>
-          {devotionOpen && (
-            <DevotionPanel
-              calendarOpen={this.state.devotionCalendarOpen}
-              date={this.state.devotionDate}
-              entry={this.devotionEntry(this.state.devotionDate)}
-              hasEntry={(dateKey) => hasContent(this.state.devotions[dateKey])}
-              importUi={this.state.devotionImport}
-              mode={this.state.devotionMode}
-              month={this.state.devotionMonth}
-              monthDirection={this.state.devotionMonthDir}
-              narrow={narrow}
-              onAnswerChange={this.setDevotionAnswer}
-              onCancelImport={this.cancelDevotionImport}
-              onClear={this.clearDevotionEntry}
-              onClose={this.closeDevotion}
-              onConfirmReplace={this.confirmDevotionReplace}
-              onEditImported={this.editImportedDevotion}
-              onKeyDown={this.onDevotionKeyDown}
-              onModeChange={(devotionMode) => this.setState({ devotionMode })}
-              onPhotoSelected={this.startDevotionPhoto}
-              onPickDate={this.pickDevotionDate}
-              onSaveImport={this.saveDevotionImport}
-              onStepMonth={this.stepDevotionMonth}
-              onToggleCalendar={this.toggleDevotionCalendar}
-              onUpdateImportDraft={this.updateDevotionImport}
-              panelRef={this.devotionPanelRef}
-              resizer={this.renderPanelResizer()}
-              saveState={this.state.devotionSaveState}
-              transitionOverride={this.state.resizingPanel ? { duration: 0 } : undefined}
-              width={this.state.preferences.panelWidth}
-            />
-          )}
-        </AnimatePresence>
 
         {selectionToolbar && (
           <div

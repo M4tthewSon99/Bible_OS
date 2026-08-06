@@ -288,8 +288,13 @@ export function ChapterPicker({
         title="Choose a book and chapter (⌘I)"
         type="button"
       >
-        {showEnglish && <span aria-live="polite" className="current-label-en">{currentLabel}</span>}
-        {showChinese && <span aria-live="polite" className="current-label-zh" lang="zh">{currentLabelZh}</span>}
+        <span aria-atomic="true" aria-live="polite" className="sr-only">
+          {showEnglish ? currentLabel : currentLabelZh}
+        </span>
+        <span aria-hidden="true" className="chapter-label-stage">
+          {showEnglish && <span className="current-label-en">{currentLabel}</span>}
+          {showChinese && <span className="current-label-zh" lang="zh">{currentLabelZh}</span>}
+        </span>
       </button>
 
       {/* Dims the reader behind the picker at every width — without it a
