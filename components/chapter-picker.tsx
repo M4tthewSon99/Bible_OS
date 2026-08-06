@@ -24,6 +24,7 @@ import {
   SurfacePortal,
 } from "@/components/fluid-surfaces";
 import { BY_ID, ORDER } from "@/lib/bible-books";
+import { restoreFocus } from "@/lib/focus";
 import * as scripture from "@/lib/bible-source";
 import type { Book, Language } from "@/lib/types";
 
@@ -125,7 +126,7 @@ export function ChapterPicker({
 
     if (wasOpenRef.current) {
       wasOpenRef.current = false;
-      const focusTimer = window.setTimeout(() => triggerRef.current?.focus(), 0);
+      const focusTimer = window.setTimeout(() => restoreFocus(triggerRef.current), 0);
       return () => window.clearTimeout(focusTimer);
     }
   }, [currentBookId, open]);
@@ -336,11 +337,32 @@ export function ChapterPicker({
         {showChinese && <span aria-live="polite" className="current-label-zh" lang="zh">{currentLabelZh}</span>}
       </button>
 
+      {/* Dims the reader behind the picker at every width — without it a
+          near-white panel floats on a near-white page and the scripture runs
+          straight into its edges. Kept in its own portal and presence tree:
+          as a sibling inside the menu's AnimatePresence it counted as an
+          extra child and stalled the menu's own enter animation. */}
+      <SurfacePortal>
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              animate={{ opacity: 1 }}
+              aria-hidden="true"
+              className="compact-menu-backdrop"
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              key="picker-scrim"
+              onClick={() => onOpenChange(false)}
+              transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+            />
+          )}
+        </AnimatePresence>
+      </SurfacePortal>
+
       <SurfacePortal enabled={compact}>
         <AnimatePresence>
           {open && (
             <>
-              {compact && <div aria-hidden="true" className="compact-menu-backdrop" onClick={() => onOpenChange(false)} />}
               <FluidSurface
                 className="menu chapter-menu"
                 edge={compact ? "bottom" : "popover"}

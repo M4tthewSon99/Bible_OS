@@ -128,7 +128,6 @@ a:hover {
   border-bottom: 1px solid #edece9;
   background: #fff;
   backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
 .header-grid {
@@ -1904,6 +1903,16 @@ button:active:not(:disabled) {
   outline-offset: 2px;
 }
 
+/* While the reader is driving with a pointer, a control that receives focus
+   programmatically — a trigger being handed focus back after its menu closes
+   — should not light up. The browser counts Escape as keyboard intent and
+   rings a button you never navigated to; `data-modality` (see lib/focus.ts)
+   ignores Escape, so the ring only returns on real keyboard navigation.
+   Text fields keep theirs: there the ring marks the caret's home. */
+:root[data-modality="pointer"] :focus-visible:not(input):not(textarea) {
+  outline: none;
+}
+
 .app-shell {
   min-height: 100dvh;
 }
@@ -1914,7 +1923,6 @@ button:active:not(:disabled) {
   background: var(--paper);
   box-shadow: none;
   backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
 .app-header::after {
@@ -2116,20 +2124,19 @@ button:active:not(:disabled) {
   background: var(--material-heavy);
   box-shadow: var(--surface-shadow);
   backdrop-filter: blur(26px) saturate(170%);
-  -webkit-backdrop-filter: blur(26px) saturate(170%);
   animation: none;
   overflow: hidden;
 }
 
 .menu.chapter-menu {
-  top: calc(100% + 10px);
+  /* Clears the header edge instead of hanging off it. */
+  top: calc(100% + 22px);
   left: 50%;
   width: min(548px, calc(100vw - 32px));
   margin-left: max(-274px, calc((100vw - 32px) / -2));
   animation: none;
   background: #fcfcfa;
   backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   transform: none;
   transform-origin: top center;
 }
@@ -2635,8 +2642,20 @@ button:active:not(:disabled) {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 24%), 0 2px 5px rgb(46 74 106 / 20%);
 }
 
+/* Sits below the header's stacking context (z-60) on purpose: the desktop
+   picker is rendered inside the header, so a higher scrim would cover the
+   very panel it is meant to separate.
+   Material matches .spotlight-backdrop's search scrim on purpose: two modal
+   pickers opened from the same header should dim the same way, and the
+   deeper blur (vs. a merely darker tint) is what actually keeps reader text
+   from being legible enough to read as UI. */
 .compact-menu-backdrop {
-  display: none;
+  position: fixed;
+  z-index: 55;
+  inset: 0;
+  display: block;
+  background: rgb(32 29 24 / 24%);
+  backdrop-filter: blur(8px) saturate(78%);
 }
 
 .sheet-grabber {
@@ -2702,7 +2721,6 @@ button:active:not(:disabled) {
     rgb(252 252 250 / 48%) 100%
   );
   backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 .translation-labels::after {
@@ -2802,7 +2820,6 @@ button:active:not(:disabled) {
   padding: max(82px, 11vh) 22px 22px;
   background: rgb(32 29 24 / 24%);
   backdrop-filter: blur(8px) saturate(78%);
-  -webkit-backdrop-filter: blur(8px) saturate(78%);
   animation: none;
 }
 
@@ -2814,7 +2831,6 @@ button:active:not(:disabled) {
   background: var(--material-heavy);
   box-shadow: 0 42px 110px -34px rgb(20 18 14 / 62%), 0 12px 36px -22px rgb(20 18 14 / 36%);
   backdrop-filter: blur(30px) saturate(175%);
-  -webkit-backdrop-filter: blur(30px) saturate(175%);
   animation: none;
 }
 
@@ -2874,7 +2890,6 @@ button:active:not(:disabled) {
   background: var(--material-heavy);
   box-shadow: -14px 0 36px -32px rgb(30 27 23 / 34%);
   backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
   animation: none;
 }
 
@@ -2963,7 +2978,6 @@ button:active:not(:disabled) {
   background: rgb(36 34 30 / 92%);
   box-shadow: 0 20px 46px -22px rgb(0 0 0 / 62%);
   backdrop-filter: blur(18px) saturate(130%);
-  -webkit-backdrop-filter: blur(18px) saturate(130%);
 }
 
 .selection-toolbar {
@@ -3003,7 +3017,6 @@ button:active:not(:disabled) {
     display: block;
     background: rgb(32 29 24 / 18%);
     backdrop-filter: blur(3px) saturate(90%);
-    -webkit-backdrop-filter: blur(3px) saturate(90%);
   }
 
   .notes-backdrop .notes-panel {
@@ -3111,8 +3124,7 @@ button:active:not(:disabled) {
     inset: 0;
     display: block;
     background: rgb(32 29 24 / 20%);
-    backdrop-filter: blur(3px);
-    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(8px) saturate(78%);
   }
 
   .menu.chapter-menu,
@@ -3519,14 +3531,12 @@ button:active:not(:disabled) {
   .translation-labels {
     background: #fcfcfa;
     backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
 
   .spotlight-backdrop,
   .notes-backdrop,
   .compact-menu-backdrop {
     backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
 }
 

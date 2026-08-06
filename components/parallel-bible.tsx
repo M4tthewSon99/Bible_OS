@@ -27,6 +27,7 @@ import {
 import { DevotionTrigger } from "@/components/devotion-calendar";
 import { DevotionPanel } from "@/components/devotion-panel";
 import { esvSearchClient } from "@/lib/esv-search-client";
+import { restoreFocus, trackInputModality } from "@/lib/focus";
 import { markdown } from "@/lib/markdown";
 import type {
   Annotation,
@@ -239,6 +240,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private landingTimer?: ReturnType<typeof setTimeout>;
   private searchAbort?: AbortController;
   private searchToken?: symbol;
+  private untrackModality?: () => void;
   private searchOpener: HTMLElement | null = null;
   private notesOpener: HTMLElement | null = null;
   private devotionOpener: HTMLElement | null = null;
@@ -261,6 +263,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     window.addEventListener("hashchange", this.onHash);
     document.addEventListener("selectionchange", this.onSelectionChange);
     document.addEventListener("mousedown", this.onDocumentMouseDown, true);
+    this.untrackModality = trackInputModality();
 
     this.setState({
       narrow: window.innerWidth < 1100,
@@ -301,6 +304,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     window.removeEventListener("hashchange", this.onHash);
     document.removeEventListener("selectionchange", this.onSelectionChange);
     document.removeEventListener("mousedown", this.onDocumentMouseDown, true);
+    this.untrackModality?.();
     if (this.scrollTick !== null) cancelAnimationFrame(this.scrollTick);
     [
       this.clearSave,
@@ -827,7 +831,15 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     if (event.key === "Escape") {
       if (this.state.spotlightOpen) this.closeSpotlight();
       else if (this.state.selectionToolbar) this.setState({ selectionToolbar: null });
-      else if (this.state.menu) this.setState({ menu: null });
+      else if (this.state.menu) {
+        const dismissed = this.state.menu;
+        // The chapter picker hands focus back to its own trigger; the settings
+        // menu has no restore of its own, so its gear would keep focus and
+        // re-open on the next Enter.
+        this.setState({ menu: null }, () => {
+          if (dismissed === "settings") restoreFocus(null);
+        });
+      }
       else if (typing) target.blur();
       else if (this.state.notesOpen) this.closeNotes();
       else if (this.state.devotionOpen) this.closeDevotion();
@@ -890,7 +902,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       activeSearchIndex: 0,
       referenceHint: null,
     });
-    setTimeout(() => opener?.focus(), 0);
+    setTimeout(() => restoreFocus(opener), 0);
   };
 
   private searchCacheKey(query: string): string {
@@ -1100,8 +1112,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const opener = this.notesOpener;
     this.setState({ notesOpen: false, activeId: null }, () => {
       setTimeout(() => {
-        const target = opener?.isConnected ? opener : this.notesTriggerRef.current;
-        target?.focus();
+        restoreFocus(opener?.isConnected ? opener : this.notesTriggerRef.current);
       }, 0);
     });
   };
@@ -1164,8 +1175,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const opener = this.devotionOpener;
     this.setState({ devotionOpen: false }, () => {
       setTimeout(() => {
-        const target = opener?.isConnected ? opener : this.devotionTriggerRef.current;
-        target?.focus();
+        restoreFocus(opener?.isConnected ? opener : this.devotionTriggerRef.current);
       }, 0);
     });
   };
