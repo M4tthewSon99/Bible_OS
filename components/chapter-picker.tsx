@@ -310,8 +310,9 @@ export function ChapterPicker({
             <>
               <FluidSurface
                 className="menu chapter-menu"
-                edge={compact ? "bottom" : "popover"}
+                edge={compact ? "bottom" : "center"}
                 key="chapter-menu"
+                material="solid"
                 onClick={(event) => event.stopPropagation()}
                 onDismiss={() => onOpenChange(false)}
                 onKeyDown={trapCompactFocus}

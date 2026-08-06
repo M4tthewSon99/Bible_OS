@@ -331,7 +331,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       this.state.spotlightOpen
         || (this.state.narrow && this.state.notesOpen)
         || (this.state.narrow && this.state.devotionOpen)
-        || (this.state.compact && this.state.menu === "chapters"),
+        || this.state.menu === "chapters",
     );
     if (this.anchor !== null) {
       const delta = document.documentElement.scrollHeight - this.anchor;
