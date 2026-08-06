@@ -5,7 +5,7 @@ import type {
   ReactNode,
   RefObject,
 } from "react";
-import { motion } from "motion/react";
+import { motion, type Transition } from "motion/react";
 import { AnimatePresence, FluidBackdrop, FluidSurface } from "@/components/fluid-surfaces";
 import { DevotionCalendar } from "@/components/devotion-calendar";
 import { DEVOTION_PROMPTS, formatDateLabel } from "@/lib/devotion";
@@ -30,7 +30,12 @@ interface DevotionPanelProps {
   onStepMonth: (delta: 1 | -1) => void;
   onToggleCalendar: () => void;
   panelRef: RefObject<HTMLDivElement | null>;
+  /* Supplied by the reader so both side panels share one resize handle
+     implementation and one stored width. */
+  resizer?: ReactNode;
   saveState: string;
+  transitionOverride?: Transition;
+  width: number;
 }
 
 export function DevotionPanel({
@@ -51,7 +56,10 @@ export function DevotionPanel({
   onStepMonth,
   onToggleCalendar,
   panelRef,
+  resizer,
   saveState,
+  transitionOverride,
+  width,
 }: DevotionPanelProps): ReactNode {
   const answers = entry?.answers || {};
 
@@ -62,7 +70,7 @@ export function DevotionPanel({
       className="notes-panel devotion-panel"
       draggable={narrow}
       edge="right"
-      expandWidth={narrow ? undefined : 392}
+      expandWidth={narrow ? undefined : width}
       key="devotion-panel"
       onClick={(event) => event.stopPropagation()}
       onDismiss={onClose}
@@ -70,7 +78,9 @@ export function DevotionPanel({
       ref={panelRef}
       role={narrow ? "dialog" : "complementary"}
       showHandle={narrow}
+      transitionOverride={transitionOverride}
     >
+      {resizer}
       <div className="notes-header">
         <span>Devotion</span>
         <button aria-label="Close devotion" onClick={onClose} type="button">×</button>

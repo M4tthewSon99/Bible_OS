@@ -95,6 +95,9 @@ export interface Preferences {
   langMode: LanguageMode;
   showVerseNumbers: boolean;
   showHeadings: boolean;
+  /* Width of the side panel (notes / devotion) in px, set by dragging its
+     edge. Shared by both panels since only one is open at a time. */
+  panelWidth: number;
 }
 
 interface AnnotationBase {

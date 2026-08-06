@@ -15,6 +15,7 @@ import {
   motion,
   MotionConfig,
   type PanInfo,
+  type Transition,
   useDragControls,
 } from "motion/react";
 
@@ -64,6 +65,10 @@ interface FluidSurfaceProps {
   role?: "complementary" | "dialog" | "menu";
   showHandle?: boolean;
   style?: CSSProperties;
+  /* Lets a caller drop the spring while a gesture is driving the surface
+     directly — a spring between the pointer and the edge it is dragging
+     reads as lag. Release it and the surface springs to rest again. */
+  transitionOverride?: Transition;
 }
 
 function projectedDistance(offset: number, velocity: number): number {
@@ -114,6 +119,7 @@ export const FluidSurface = forwardRef<HTMLDivElement, FluidSurfaceProps>(functi
     role,
     showHandle = false,
     style,
+    transitionOverride,
   },
   ref,
 ) {
@@ -177,7 +183,7 @@ export const FluidSurface = forwardRef<HTMLDivElement, FluidSurfaceProps>(functi
       ref={ref}
       role={role}
       style={{ willChange: "transform, opacity", ...style }}
-      transition={axis ? GESTURE_SPRING : SURFACE_SPRING}
+      transition={transitionOverride ?? (axis ? GESTURE_SPRING : SURFACE_SPRING)}
     >
       {showHandle && axis && (
         <div

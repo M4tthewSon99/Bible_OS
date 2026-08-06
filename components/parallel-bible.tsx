@@ -26,6 +26,7 @@ import {
 } from "@/lib/devotion";
 import { DevotionTrigger } from "@/components/devotion-calendar";
 import { DevotionPanel } from "@/components/devotion-panel";
+import { PanelResizer } from "@/components/panel-resizer";
 import { esvSearchClient } from "@/lib/esv-search-client";
 import { restoreFocus, trackInputModality } from "@/lib/focus";
 import { markdown } from "@/lib/markdown";
@@ -58,6 +59,11 @@ const SPACING = [
 ];
 const MAX_LOADED = 8;
 const HAS_CJK = /[\u3400-\u9fff]/;
+const PANEL_WIDTH_DEFAULT = 392;
+const PANEL_WIDTH_MIN = 300;
+/* Leave the reader the majority of the window no matter how wide the screen
+   is \u2014 the panel is a companion to the text, not a peer. */
+const panelWidthMax = (): number => Math.min(720, Math.round(window.innerWidth * 0.55));
 
 interface LoadedChapter {
   key: string;
@@ -105,6 +111,7 @@ interface State {
   preferences: Preferences;
   narrowLanguage: Language;
   narrow: boolean;
+  resizingPanel: boolean;
   compact: boolean;
   annotations: Annotation[];
   notesOpen: boolean;
@@ -180,9 +187,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       langMode: "both",
       showVerseNumbers: true,
       showHeadings: true,
+      panelWidth: PANEL_WIDTH_DEFAULT,
     },
     narrowLanguage: "en",
     narrow: false,
+    resizingPanel: false,
     compact: false,
     annotations: [],
     notesOpen: false,
@@ -322,6 +331,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     esvSearchClient.close();
     document.body.classList.remove("search-open");
     document.body.classList.remove("modal-open");
+    document.body.classList.remove("resizing-panel");
   }
 
   componentDidUpdate(): void {
@@ -333,6 +343,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         || (this.state.narrow && this.state.devotionOpen)
         || this.state.menu === "chapters",
     );
+    document.body.classList.toggle("resizing-panel", this.state.resizingPanel);
     if (this.anchor !== null) {
       const delta = document.documentElement.scrollHeight - this.anchor;
       this.anchor = null;
@@ -386,6 +397,35 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private persistAnnotations = (annotations: Annotation[]): void => {
     this.writeJson(STORAGE.annotations, annotations);
   };
+
+  /* Width lives in component state while dragging and is only written to
+     storage on release, so a drag does not spam localStorage. */
+  private startPanelResize = (): void => {
+    this.setState({ resizingPanel: true });
+  };
+
+  private movePanelResize = (panelWidth: number): void => {
+    this.setState((state) => ({ preferences: { ...state.preferences, panelWidth } }));
+  };
+
+  private endPanelResize = (panelWidth: number): void => {
+    this.setState({ resizingPanel: false });
+    this.setPreferences({ panelWidth });
+  };
+
+  private renderPanelResizer(): ReactNode {
+    if (this.state.narrow) return null;
+    return (
+      <PanelResizer
+        max={panelWidthMax()}
+        min={PANEL_WIDTH_MIN}
+        onResizeEnd={this.endPanelResize}
+        onResizeMove={this.movePanelResize}
+        onResizeStart={this.startPanelResize}
+        width={this.state.preferences.panelWidth}
+      />
+    );
+  }
 
   private setPreferences = (patch: Partial<Preferences>): void => {
     this.setState((state) => {
@@ -2079,7 +2119,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         className="notes-panel"
         draggable={narrow}
         edge="right"
-        expandWidth={narrow ? undefined : 392}
+        expandWidth={narrow ? undefined : this.state.preferences.panelWidth}
         key="notes-panel"
         onClick={(event) => event.stopPropagation()}
         onDismiss={this.closeNotes}
@@ -2087,7 +2127,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         ref={this.notesPanelRef}
         role={narrow ? "dialog" : "complementary"}
         showHandle={narrow}
+        transitionOverride={this.state.resizingPanel ? { duration: 0 } : undefined}
       >
+        {this.renderPanelResizer()}
         <div className="notes-header">
           <span>Notes · {currentLabel}</span>
           <button
@@ -2233,13 +2275,16 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             className={`reader${this.state.atCanonEnd ? " canon-end" : ""}`}
             inert={narrow && (notesOpen || devotionOpen) ? true : undefined}
           >
-            <div className="reader-inner">
-              <div className="translation-labels">
-                <div className="translation-labels-inner">
-                  {showEnglish && <span>{englishLabel}</span>}
-                  {showChinese && <span lang="zh">和合本</span>}
-                </div>
+            {/* Sits outside .reader-inner so its sticky background spans the
+                reader column exactly. Inside, it needed a 100vw bleed to reach
+                the edges, which also carried it across the side panel. */}
+            <div className="translation-labels">
+              <div className="translation-labels-inner">
+                {showEnglish && <span>{englishLabel}</span>}
+                {showChinese && <span lang="zh">和合本</span>}
               </div>
+            </div>
+            <div className="reader-inner">
               {this.state.atCanonStart && <p className="canon-edge">Beginning of the canon</p>}
               {chapters.map((chapter, index) =>
                 this.renderChapter(chapter, index === 0, showEnglish, showChinese),
@@ -2270,7 +2315,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                 onStepMonth={this.stepDevotionMonth}
                 onToggleCalendar={this.toggleDevotionCalendar}
                 panelRef={this.devotionPanelRef}
+                resizer={this.renderPanelResizer()}
                 saveState={this.state.devotionSaveState}
+                transitionOverride={this.state.resizingPanel ? { duration: 0 } : undefined}
+                width={this.state.preferences.panelWidth}
               />
             )}
           </AnimatePresence>
