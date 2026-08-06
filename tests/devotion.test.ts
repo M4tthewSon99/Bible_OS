@@ -110,4 +110,16 @@ describe("hasContent", () => {
     entry.answers = { scripture: "", prayer: "Thank you." };
     expect(hasContent(entry)).toBe(true);
   });
+
+  it("retains an imported page before an answer is written", () => {
+    const entry = emptyEntry("2026-08-05", null);
+    entry.v = 2;
+    entry.template = {
+      kind: "photo-ocr",
+      sourceLanguage: "en",
+      bibleText: "2 Samuel 2 (ESV)",
+      sections: [],
+    };
+    expect(hasContent(entry)).toBe(true);
+  });
 });

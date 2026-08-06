@@ -13,54 +13,84 @@ export function markdown(source: string): string {
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
     .replace(/`([^`]+)`/g, "<code>$1</code>");
+  const lines = source.replace(/\r/g, "").split("\n");
   const output: string[] = [];
-  let list: "ul" | "ol" | null = null;
-  const closeList = () => {
-    if (list) output.push(`</${list}>`);
-    list = null;
+  const listMatch = (raw: string) => raw.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+
+  /* Nested lists are common in study notes. Building the HTML recursively
+     keeps children inside their parent <li> instead of flattening them into
+     paragraphs, while every piece of user text still travels through inline(). */
+  const renderList = (start: number, indent: number): [string, number] => {
+    const first = listMatch(lines[start]);
+    if (!first) return ["", start];
+    const type = /^\d/.test(first[2]) ? "ol" : "ul";
+    const items: string[] = [];
+    let index = start;
+
+    while (index < lines.length) {
+      const match = listMatch(lines[index]);
+      if (!match) break;
+      const currentIndent = match[1].replace(/\t/g, "  ").length;
+      const currentType = /^\d/.test(match[2]) ? "ol" : "ul";
+      if (currentIndent !== indent || currentType !== type) break;
+
+      const content = [match[3]];
+      let children = "";
+      index += 1;
+
+      while (index < lines.length) {
+        const next = listMatch(lines[index]);
+        if (next) {
+          const nextIndent = next[1].replace(/\t/g, "  ").length;
+          if (nextIndent > indent) {
+            const [child, nextIndex] = renderList(index, nextIndent);
+            children += child;
+            index = nextIndex;
+            continue;
+          }
+          break;
+        }
+        if (!lines[index].trim()) break;
+        content.push(lines[index].trim());
+        index += 1;
+      }
+
+      items.push(`<li>${content.map(inline).join("<br>")}${children}</li>`);
+      if (!lines[index]?.trim()) break;
+    }
+
+    return [`<${type}>${items.join("")}</${type}>`, index];
   };
 
-  source.replace(/\r/g, "").split("\n").forEach((raw) => {
-    const line = raw.trimEnd();
-    if (!line.trim()) {
-      closeList();
-      return;
+  let index = 0;
+  while (index < lines.length) {
+    const raw = lines[index].trimEnd();
+    if (!raw.trim()) {
+      index += 1;
+      continue;
     }
-    let match = line.match(/^(#{1,3})\s+(.*)$/);
-    if (match) {
-      closeList();
-      output.push(`<h${match[1].length}>${inline(match[2])}</h${match[1].length}>`);
-      return;
+    const list = listMatch(raw);
+    if (list) {
+      const indent = list[1].replace(/\t/g, "  ").length;
+      const [html, nextIndex] = renderList(index, indent);
+      output.push(html);
+      index = nextIndex;
+      continue;
     }
-    match = line.match(/^>\s?(.*)$/);
-    if (match) {
-      closeList();
-      output.push(`<blockquote>${inline(match[1])}</blockquote>`);
-      return;
+    const heading = raw.match(/^(#{1,3})\s+(.*)$/);
+    if (heading) {
+      output.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);
+      index += 1;
+      continue;
     }
-    match = line.match(/^[-*+]\s+(.*)$/);
-    if (match) {
-      if (list !== "ul") {
-        closeList();
-        output.push("<ul>");
-        list = "ul";
-      }
-      output.push(`<li>${inline(match[1])}</li>`);
-      return;
+    const quote = raw.match(/^>\s?(.*)$/);
+    if (quote) {
+      output.push(`<blockquote>${inline(quote[1])}</blockquote>`);
+      index += 1;
+      continue;
     }
-    match = line.match(/^\d+[.)]\s+(.*)$/);
-    if (match) {
-      if (list !== "ol") {
-        closeList();
-        output.push("<ol>");
-        list = "ol";
-      }
-      output.push(`<li>${inline(match[1])}</li>`);
-      return;
-    }
-    closeList();
-    output.push(`<p>${inline(line)}</p>`);
-  });
-  closeList();
+    output.push(`<p>${inline(raw)}</p>`);
+    index += 1;
+  }
   return output.join("");
 }

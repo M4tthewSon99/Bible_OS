@@ -37,6 +37,8 @@ interface ChapterPickerProps {
   onOpenChange: (open: boolean) => void;
   onPick: (bookId: string, chapter: number) => void;
   open: boolean;
+  /** Width reserved by a companion desktop rail, such as Devotion. */
+  readerScrimInset?: number;
 }
 
 type PickerStep = "books" | "chapters";
@@ -67,6 +69,7 @@ export function ChapterPicker({
   onOpenChange,
   onPick,
   open,
+  readerScrimInset = 0,
 }: ChapterPickerProps): ReactNode {
   const [activeTestament, setActiveTestament] = useState(() => scripture.bookTestament(currentBookId));
   const [selectedBookId, setSelectedBookId] = useState(currentBookId);
@@ -265,6 +268,13 @@ export function ChapterPicker({
 
   const showEnglish = !narrow || narrowLanguage === "en";
   const showChinese = !narrow || narrowLanguage === "zh";
+  const readerSurfaceStyle = readerScrimInset > 0
+    ? {
+      left: `calc((100vw - ${readerScrimInset}px) / 2)`,
+      width: `min(548px, calc(100vw - ${readerScrimInset + 32}px))`,
+      marginLeft: `max(-274px, calc((100vw - ${readerScrimInset + 32}px) / -2))`,
+    }
+    : undefined;
 
   return (
     <div className="chapter-picker">
@@ -298,6 +308,7 @@ export function ChapterPicker({
               initial={{ opacity: 0 }}
               key="picker-scrim"
               onClick={() => onOpenChange(false)}
+              style={readerScrimInset > 0 ? { right: readerScrimInset } : undefined}
               transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
             />
           )}
@@ -317,6 +328,7 @@ export function ChapterPicker({
                 onDismiss={() => onOpenChange(false)}
                 onKeyDown={trapCompactFocus}
                 showHandle={compact}
+                style={readerSurfaceStyle}
               >
                 <Dialog
                   aria-label="Choose a book and chapter"

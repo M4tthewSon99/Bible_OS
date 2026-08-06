@@ -30,10 +30,16 @@ import { PanelResizer } from "@/components/panel-resizer";
 import { esvSearchClient } from "@/lib/esv-search-client";
 import { restoreFocus, trackInputModality } from "@/lib/focus";
 import { markdown } from "@/lib/markdown";
+import { importWithLocalOcrFallback } from "@/lib/devotion-import-fallback";
+import { photoValidationError, recognizeDevotionPhoto } from "@/lib/devotion-import";
+import { recognizeDevotionWithVision } from "@/lib/devotion-vision-client";
 import type {
   Annotation,
   ChapterData,
   DevotionEntry,
+  DevotionImportDraft,
+  DevotionImportMethod,
+  DevotionImportUi,
   DevotionStore,
   EnglishSourceId,
   HighlightAnnotation,
@@ -61,6 +67,14 @@ const MAX_LOADED = 8;
 const HAS_CJK = /[\u3400-\u9fff]/;
 const PANEL_WIDTH_DEFAULT = 392;
 const PANEL_WIDTH_MIN = 300;
+const EMPTY_DEVOTION_IMPORT: DevotionImportUi = {
+  phase: "idle",
+  progress: 0,
+  status: "",
+  error: null,
+  draft: null,
+  replacePending: false,
+};
 /* Leave the reader the majority of the window no matter how wide the screen
    is \u2014 the panel is a companion to the text, not a peer. */
 const panelWidthMax = (): number => Math.min(720, Math.round(window.innerWidth * 0.55));
@@ -130,6 +144,7 @@ interface State {
   devotionMonthDir: 1 | -1;
   devotionMode: "write" | "preview";
   devotionSaveState: string;
+  devotionImport: DevotionImportUi;
   sourceId: EnglishSourceId;
   keyField: boolean;
   keyDraft: string;
@@ -211,6 +226,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     devotionMonthDir: 1,
     devotionMode: "write",
     devotionSaveState: "",
+    devotionImport: EMPTY_DEVOTION_IMPORT,
     sourceId: "web",
     keyField: false,
     keyDraft: "",
@@ -242,6 +258,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private anchor: number | null = null;
   private busy: "next" | "prev" | null = null;
   private clearSave?: ReturnType<typeof setTimeout>;
+  private devotionImportAbort?: AbortController;
   private lastY: number | null = null;
   private pendingScroll: { selector: string; at: number } | null = null;
   private pendingUndo: Annotation | null = null;
@@ -260,6 +277,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private devotionSaveTimer?: ReturnType<typeof setTimeout>;
   private clearDevotionSave?: ReturnType<typeof setTimeout>;
   private pendingDevotionUndo: DevotionEntry | null = null;
+  private devotionImportToken?: symbol;
   private readonly searchResponses = new Map<
     string,
     SearchResult[]
@@ -332,6 +350,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       this.toastTimer,
     ].forEach((timer) => timer && clearTimeout(timer));
     this.searchAbort?.abort();
+    this.devotionImportToken = undefined;
     esvSearchClient.close();
     document.body.classList.remove("search-open");
     document.body.classList.remove("modal-open");
@@ -1268,6 +1287,142 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     else this.openDevotion();
   };
 
+  private startDevotionPhoto = (photo: File, method: DevotionImportMethod): void => {
+    const problem = photoValidationError(photo);
+    if (problem) {
+      this.setState({ devotionImport: { ...EMPTY_DEVOTION_IMPORT, phase: "error", error: problem } });
+      return;
+    }
+
+    const token = Symbol("devotion-import");
+    this.devotionImportAbort?.abort();
+    const abort = new AbortController();
+    this.devotionImportToken = token;
+    this.devotionImportAbort = abort;
+    this.setState({
+      devotionCalendarOpen: false,
+      devotionImport: {
+        ...EMPTY_DEVOTION_IMPORT,
+        phase: "recognizing",
+        method,
+        status: method === "cloud-vision" ? "Preparing vision import" : "Preparing private OCR",
+      },
+    });
+
+    const onProgress = ({ progress, status }: { progress: number; status: string }) => {
+      if (this.devotionImportToken !== token) return;
+      this.setState((state) => ({
+        devotionImport: { ...state.devotionImport, progress, status },
+      }));
+    };
+    const recognition = method === "cloud-vision"
+      ? importWithLocalOcrFallback(
+        () => recognizeDevotionWithVision(photo, onProgress, abort.signal),
+        () => recognizeDevotionPhoto(photo, onProgress),
+        () => abort.signal.aborted,
+        () => {
+          onProgress({ progress: 0.12, status: "Vision unavailable — using private OCR" });
+        },
+      )
+      : recognizeDevotionPhoto(photo, onProgress)
+        .then((draft) => ({ draft, method }));
+
+    void recognition.then(({ draft, method: completedWith }) => {
+      if (this.devotionImportToken !== token) return;
+      this.devotionImportToken = undefined;
+      this.devotionImportAbort = undefined;
+      this.setState({
+        devotionImport: {
+          ...EMPTY_DEVOTION_IMPORT,
+          phase: "review",
+          method: completedWith,
+          draft,
+        },
+      });
+    }).catch((error: unknown) => {
+      if (this.devotionImportToken !== token) return;
+      this.devotionImportToken = undefined;
+      this.devotionImportAbort = undefined;
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      const message = error instanceof Error ? error.message : "This photo could not be read.";
+      this.setState({
+        devotionImport: { ...EMPTY_DEVOTION_IMPORT, phase: "error", method, error: message },
+      });
+    });
+  };
+
+  private cancelDevotionImport = (): void => {
+    this.devotionImportAbort?.abort();
+    this.devotionImportAbort = undefined;
+    this.devotionImportToken = undefined;
+    this.setState({ devotionImport: EMPTY_DEVOTION_IMPORT });
+  };
+
+  private updateDevotionImport = (draft: DevotionImportDraft): void => {
+    this.setState((state) => ({
+      devotionImport: { ...state.devotionImport, draft, replacePending: false },
+    }));
+  };
+
+  private editImportedDevotion = (): void => {
+    const entry = this.devotionEntry(this.state.devotionDate);
+    if (!entry?.template) return;
+    this.setState({
+      devotionCalendarOpen: false,
+      devotionImport: {
+        ...EMPTY_DEVOTION_IMPORT,
+        phase: "review",
+        draft: {
+          date: entry.date,
+          template: entry.template,
+          answers: { ...entry.answers },
+        },
+      },
+    });
+  };
+
+  private saveDevotionImport = (): void => {
+    const draft = this.state.devotionImport.draft;
+    if (!draft || !/^\d{4}-\d{2}-\d{2}$/.test(draft.date)) return;
+    if (this.state.devotions[draft.date] && !this.state.devotionImport.replacePending) {
+      this.setState((state) => ({
+        devotionImport: { ...state.devotionImport, replacePending: true },
+      }));
+      return;
+    }
+    this.commitDevotionImport(draft);
+  };
+
+  private confirmDevotionReplace = (): void => {
+    const draft = this.state.devotionImport.draft;
+    if (draft) this.commitDevotionImport(draft);
+  };
+
+  private commitDevotionImport(draft: DevotionImportDraft): void {
+    const now = new Date().toISOString();
+    const entry: DevotionEntry = {
+      v: 2,
+      date: draft.date,
+      answers: draft.answers,
+      ref: draft.template.bibleText,
+      template: draft.template,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.setState((state) => {
+      const devotions = { ...state.devotions, [entry.date]: entry };
+      this.persistDevotions(devotions);
+      return {
+        devotions,
+        devotionDate: entry.date,
+        devotionMonth: monthKey(entry.date),
+        devotionCalendarOpen: false,
+        devotionSaveState: "Imported",
+        devotionImport: EMPTY_DEVOTION_IMPORT,
+      };
+    });
+  }
+
   private devotionEntry(dateKey: string): DevotionEntry | undefined {
     return this.state.devotions[dateKey];
   }
@@ -1377,7 +1532,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private exportBackup = (): void => {
     const payload = {
       app: "bible-os",
-      schema: 2,
+      schema: 3,
       exportedAt: new Date().toISOString(),
       prefs: this.state.preferences,
       annotations: this.state.annotations,
@@ -1551,9 +1706,24 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     void this.openAt(bookId, chapter);
   };
 
+  private readerOverlayInset(): number {
+    const { devotionOpen, devotionRailActive, narrow, preferences } = this.state;
+    return !narrow && (devotionOpen || devotionRailActive) ? preferences.panelWidth : 0;
+  }
+
   private renderChapterPicker(currentLabel: string, currentLabelZh: string): ReactNode {
-    const { compact, current, menu, narrow, narrowLanguage } = this.state;
+    const {
+      compact,
+      current,
+      menu,
+      narrow,
+      narrowLanguage,
+    } = this.state;
     const active = current || { bookId: "MAT", chapter: 1 };
+    // The picker surface is portaled to the document, while the desktop
+    // Devotion panel is a sibling rail. Reserve that rail's exact live width
+    // so the reader-only scrim does not dim or intercept it.
+    const readerScrimInset = this.readerOverlayInset();
     return (
       <ChapterPicker
         compact={compact}
@@ -1566,6 +1736,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         onOpenChange={(open) => this.setState({ menu: open ? "chapters" : null })}
         onPick={this.pickChapter}
         open={menu === "chapters"}
+        readerScrimInset={readerScrimInset}
       />
     );
   }
@@ -1623,6 +1794,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       },
     ];
     const highlightCount = annotations.filter((annotation) => annotation.kind === "highlight").length;
+    const readerOverlayInset = this.readerOverlayInset();
+    const readerOverlayStyle = readerOverlayInset > 0 ? { right: readerOverlayInset } : undefined;
+    const readerOverlaySurfaceStyle = readerOverlayInset > 0
+      ? { width: `min(548px, calc(100vw - ${readerOverlayInset + 32}px))` }
+      : undefined;
 
     return (
       <>
@@ -1867,7 +2043,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       <SurfacePortal>
       <AnimatePresence>
       {spotlightOpen && (
-        <FluidBackdrop className="reader-scrim spotlight-backdrop" onDismiss={this.closeSpotlight}>
+        <FluidBackdrop
+          className="reader-scrim spotlight-backdrop"
+          onDismiss={this.closeSpotlight}
+          style={readerOverlayStyle}
+        >
           <FluidSurface
             ariaLabel="Search"
             ariaModal
@@ -1880,6 +2060,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             ref={this.spotlightRef}
             role="dialog"
             showHandle={compact}
+            style={readerOverlaySurfaceStyle}
           >
             <div className="spotlight-head">
               <form className="spotlight-form" onSubmit={this.handleSearchSubmit} role="search">
@@ -2345,18 +2526,25 @@ export class ParallelBible extends Component<Record<string, never>, State> {
               date={this.state.devotionDate}
               entry={this.devotionEntry(this.state.devotionDate)}
               hasEntry={(dateKey) => hasContent(this.state.devotions[dateKey])}
+              importUi={this.state.devotionImport}
               mode={this.state.devotionMode}
               month={this.state.devotionMonth}
               monthDirection={this.state.devotionMonthDir}
               narrow={narrow}
               onAnswerChange={this.setDevotionAnswer}
+              onCancelImport={this.cancelDevotionImport}
               onClear={this.clearDevotionEntry}
               onClose={this.closeDevotion}
+              onConfirmReplace={this.confirmDevotionReplace}
+              onEditImported={this.editImportedDevotion}
               onKeyDown={this.onDevotionKeyDown}
               onModeChange={(devotionMode) => this.setState({ devotionMode })}
+              onPhotoSelected={this.startDevotionPhoto}
               onPickDate={this.pickDevotionDate}
+              onSaveImport={this.saveDevotionImport}
               onStepMonth={this.stepDevotionMonth}
               onToggleCalendar={this.toggleDevotionCalendar}
+              onUpdateImportDraft={this.updateDevotionImport}
               panelRef={this.devotionPanelRef}
               resizer={this.renderPanelResizer()}
               saveState={this.state.devotionSaveState}

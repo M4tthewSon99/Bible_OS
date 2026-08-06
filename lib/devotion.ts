@@ -123,5 +123,8 @@ export function emptyEntry(dateKey: string, ref: string | null): DevotionEntry {
 
 export function hasContent(entry: DevotionEntry | undefined): boolean {
   if (!entry) return false;
+  // An imported page is meaningful before the reader has written an answer.
+  // Without this, the persistence cleanup would silently drop a new plan.
+  if (entry.template?.kind === "photo-ocr") return true;
   return Object.values(entry.answers).some((answer) => answer.trim().length > 0);
 }

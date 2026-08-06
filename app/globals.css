@@ -3492,6 +3492,369 @@ button:active:not(:disabled) {
   field-sizing: content;
 }
 
+/* Imported devotion pages keep the print handout's hierarchy without turning
+   the companion rail into a miniature PDF viewer. */
+.devotion-photo-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.devotion-empty-state {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding: 26px 4px 12px;
+}
+
+.devotion-empty-state p:not(.notes-eyebrow),
+.devotion-import-copy {
+  max-width: 30rem;
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 14px;
+  line-height: 1.58;
+}
+
+.devotion-empty-state button,
+.devotion-import-actions > button:first-of-type {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.devotion-empty-state button:hover,
+.devotion-import-actions > button:first-of-type:hover {
+  background: #35597f;
+}
+
+.devotion-empty-state .devotion-empty-secondary {
+  border-color: #e2e0db;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.devotion-empty-state .devotion-empty-secondary:hover {
+  border-color: #d3d0c9;
+  background: transparent;
+  color: var(--ink);
+}
+
+.devotion-empty-state small {
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.devotion-import-status {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 48px 12px;
+  text-align: center;
+}
+
+.devotion-import-status p {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.devotion-import-status small {
+  min-height: 1.3em;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.devotion-import-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgb(66 101 143 / 18%);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: devotion-spin 760ms linear infinite;
+}
+
+@keyframes devotion-spin {
+  to { transform: rotate(1turn); }
+}
+
+.devotion-secondary-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #e2e0db;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11.5px;
+}
+
+.devotion-secondary-button:hover {
+  border-color: #d3d0c9;
+  color: var(--ink);
+}
+
+.devotion-import-error {
+  margin: 18px 0;
+  padding: 13px;
+  border: 1px solid #ead4d0;
+  border-radius: 8px;
+  background: #fffafa;
+}
+
+.devotion-import-error p {
+  margin: 0 0 10px;
+  color: #8a5a55;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.devotion-import-review {
+  display: grid;
+  gap: 15px;
+  padding-top: 2px;
+}
+
+.devotion-review-field {
+  display: grid;
+  gap: 5px;
+}
+
+.devotion-review-field > span,
+.devotion-review-block-head > span {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.devotion-review-field input,
+.devotion-review-block textarea {
+  width: 100%;
+  border: 1px solid #e4e2de;
+  border-radius: 6px;
+  outline: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+
+.devotion-review-field input {
+  height: 34px;
+  padding: 0 9px;
+  font-size: 12.5px;
+}
+
+.devotion-review-section {
+  display: grid;
+  gap: 10px;
+  padding: 13px 0 0;
+  border-top: 1px solid #eceae6;
+}
+
+.devotion-review-block {
+  padding: 10px;
+  border: 1px solid #eeece8;
+  border-radius: 7px;
+  background: #fdfcfb;
+}
+
+.devotion-review-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.devotion-review-block-head button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8a5a55;
+  cursor: pointer;
+  font-size: 10.5px;
+}
+
+.devotion-review-block textarea {
+  display: block;
+  min-height: 70px;
+  padding: 8px 9px;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.devotion-review-block.reference textarea {
+  min-height: 44px;
+  font-family: inherit;
+}
+
+.devotion-review-answer {
+  min-height: 82px !important;
+  margin-top: 8px;
+  background: #fff !important;
+}
+
+.devotion-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.devotion-import-actions > p {
+  width: 100%;
+  margin: 0 0 2px;
+  color: #8a5a55;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.devotion-danger-button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid #a96660;
+  border-radius: 6px;
+  background: #a96660;
+  color: #fff;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.imported-devotion {
+  padding-top: 5px;
+}
+
+.devotion-date-ribbon {
+  margin: 0 0 19px;
+  padding: 11px 12px;
+  background: #807f7d;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.015em;
+  text-align: center;
+}
+
+.devotion-bible-text {
+  margin: 0 0 27px;
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 15px;
+  font-weight: 700;
+  font-optical-sizing: auto;
+  letter-spacing: -0.012em;
+  line-height: 1.42;
+}
+
+.devotion-bible-text span {
+  font-family: inherit;
+  font-weight: 700;
+}
+
+.devotion-source-section {
+  margin-bottom: 34px;
+}
+
+.devotion-source-section h2 {
+  margin: 0 0 13px;
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 20px;
+  font-weight: 750;
+  font-optical-sizing: auto;
+  letter-spacing: -0.025em;
+  line-height: 1.18;
+}
+
+.devotion-source-reference {
+  margin: -3px 0 10px;
+  color: var(--muted);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.devotion-source-text {
+  margin: 0 0 13px;
+  color: var(--ink-soft);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 13px;
+  line-height: 1.52;
+}
+
+.devotion-source-quote {
+  margin: 9px 0 17px;
+  padding: 3px 0 3px 13px;
+  border-left: 2px solid #bfc7cc;
+  color: #57544e;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 13px;
+  font-style: italic;
+  letter-spacing: -0.007em;
+  line-height: 1.55;
+}
+
+.devotion-question {
+  margin: 0 0 25px;
+}
+
+.devotion-question > p {
+  position: relative;
+  margin: 0 0 10px;
+  padding-left: 17px;
+  color: var(--ink-soft);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 13px;
+  letter-spacing: -0.006em;
+  line-height: 1.52;
+}
+
+.devotion-question > p::before {
+  position: absolute;
+  left: 1px;
+  color: var(--ink);
+  content: "•";
+}
+
+.imported-devotion .devotion-editor {
+  min-height: 132px;
+  padding: 12px 13px;
+  border-color: rgb(48 44 38 / 12%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 84%);
+  box-shadow: inset 0 1px 2px rgb(48 44 38 / 4%);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.note-preview ul ul,
+.note-preview ol ol,
+.note-preview ul ol,
+.note-preview ol ul {
+  margin: 4px 0;
+}
+
 /* Must follow the base rules above — the breakpoint blocks earlier in this
    file would otherwise be overridden by them. */
 @media (max-width: 759px) {

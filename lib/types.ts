@@ -128,11 +128,78 @@ export interface ChapterAnnotation extends AnnotationBase {
 
 export type Annotation = HighlightAnnotation | ChapterAnnotation;
 
+export interface DevotionReferenceBlock {
+  kind: "reference";
+  id: string;
+  text: string;
+}
+
+export interface DevotionQuoteBlock {
+  kind: "quote";
+  id: string;
+  text: string;
+}
+
+export interface DevotionPromptBlock {
+  kind: "prompt";
+  id: string;
+  text: string;
+}
+
+/* This preserves short explanatory copy that is neither a Scripture range nor
+   a question. It is intentionally read-only once imported, like the source
+   page's study text. */
+export interface DevotionTextBlock {
+  kind: "text";
+  id: string;
+  text: string;
+}
+
+export type DevotionTemplateBlock =
+  | DevotionReferenceBlock
+  | DevotionQuoteBlock
+  | DevotionPromptBlock
+  | DevotionTextBlock;
+
+export interface DevotionTemplateSection {
+  id: string;
+  title: string;
+  blocks: DevotionTemplateBlock[];
+}
+
+export interface ImportedDevotionTemplate {
+  kind: "photo-ocr";
+  sourceLanguage: "en";
+  bibleText: string | null;
+  sections: DevotionTemplateSection[];
+}
+
+export interface DevotionImportDraft {
+  date: string;
+  template: ImportedDevotionTemplate;
+  answers: Record<string, string>;
+}
+
+export type DevotionImportMethod = "local-ocr" | "cloud-vision";
+
+export interface DevotionImportUi {
+  phase: "idle" | "recognizing" | "review" | "error";
+  method?: DevotionImportMethod;
+  progress: number;
+  status: string;
+  error: string | null;
+  draft: DevotionImportDraft | null;
+  replacePending: boolean;
+}
+
 export interface DevotionEntry {
-  v: 1;
+  v: 1 | 2;
   date: string;
   answers: Record<string, string>;
   ref: string | null;
+  /* Version 1 entries predate imported source pages and continue to use the
+     original fixed prompts. */
+  template?: ImportedDevotionTemplate;
   createdAt: string;
   updatedAt: string;
 }

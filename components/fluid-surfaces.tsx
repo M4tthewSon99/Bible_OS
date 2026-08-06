@@ -203,9 +203,10 @@ interface FluidBackdropProps {
   children: ReactNode;
   className: string;
   onDismiss: () => void;
+  style?: CSSProperties;
 }
 
-export function FluidBackdrop({ children, className, onDismiss }: FluidBackdropProps) {
+export function FluidBackdrop({ children, className, onDismiss, style }: FluidBackdropProps) {
   return (
     <motion.div
       animate={{ opacity: 1 }}
@@ -213,6 +214,7 @@ export function FluidBackdrop({ children, className, onDismiss }: FluidBackdropP
       exit={{ opacity: 0 }}
       initial={{ opacity: 0 }}
       onClick={onDismiss}
+      style={style}
       transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
     >
       {children}
