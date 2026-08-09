@@ -911,7 +911,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }
     if (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.code === "Backslash") {
       event.preventDefault();
-      this.openDevotion();
+      this.toggleDevotion();
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -1270,8 +1270,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }));
   };
 
-  private openDevotion = (): void => {
-    this.openSidePanel("devotion");
+  /** ⌘\ collapses the panel when open, otherwise opens Devotion. */
+  private toggleDevotion = (): void => {
+    if (this.state.sidePanelOpen) this.closeSidePanel();
+    else this.openSidePanel("devotion");
   };
 
   private startDevotionPhoto = (photo: File, method: DevotionImportMethod): void => {
@@ -2034,14 +2036,12 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     currentLabelZh: string,
   ): ReactNode {
     const { compact, menu, narrow, sidePanelOpen } = this.state;
+    const headerBlocked = (narrow && sidePanelOpen) || (compact && menu === "chapters");
 
     return (
-      <header
-        className="app-header"
-        inert={(narrow && sidePanelOpen) || (compact && menu === "chapters") ? true : undefined}
-      >
+      <header className="app-header">
         <div className="header-grid">
-          <div className="brand-block">
+          <div className="brand-block" inert={headerBlocked || undefined}>
             <a
               className="brand"
               href="#/"
@@ -2054,7 +2054,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             </a>
           </div>
 
-          {this.renderChapterPicker(currentLabel, currentLabelZh)}
+          <div inert={headerBlocked || undefined}>
+            {this.renderChapterPicker(currentLabel, currentLabelZh)}
+          </div>
 
           <button
             aria-expanded={sidePanelOpen}
@@ -2348,7 +2350,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       { id: "search", label: "Search", shortcut: "⌘K" },
       { id: "settings", label: "Display" },
       { id: "notes", label: "Notes" },
-      { id: "devotion", label: "Devotion", shortcut: "⌘\\" },
+      { id: "devotion", label: "Devotion" },
     ];
     const activeLabel = destinations.find((destination) => destination.id === sidePanelView)?.label || "Tools";
     let content: ReactNode;
@@ -2407,23 +2409,43 @@ export class ParallelBible extends Component<Record<string, never>, State> {
             <p>Bible tools</p>
             <h2>{activeLabel}</h2>
           </div>
-          <button aria-label="Close Bible tools" onClick={() => this.closeSidePanel()} type="button">×</button>
+          <button
+            aria-label="Close Bible tools"
+            className="utility-panel-close"
+            onClick={() => this.closeSidePanel()}
+            type="button"
+          >
+            <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 14 14" width="14" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7">
+              <path d="M3 3l8 8M11 3l-8 8" />
+            </svg>
+          </button>
         </div>
 
         <nav aria-label="Bible tools" className="utility-panel-nav">
-          {destinations.map((destination) => (
-            <button
-              aria-current={sidePanelView === destination.id ? "page" : undefined}
-              className={sidePanelView === destination.id ? "active" : ""}
-              key={destination.id}
-              onClick={() => this.openSidePanel(destination.id)}
-              type="button"
-            >
-              {this.renderSidePanelIcon(destination.id)}
-              <span>{destination.label}</span>
-              {destination.shortcut && <kbd>{destination.shortcut}</kbd>}
-            </button>
-          ))}
+          {destinations.map((destination) => {
+            const active = sidePanelView === destination.id;
+            return (
+              <button
+                aria-current={active ? "page" : undefined}
+                className={active ? "active" : ""}
+                key={destination.id}
+                onClick={() => this.openSidePanel(destination.id)}
+                type="button"
+              >
+                {active && (
+                  <motion.div
+                    aria-hidden="true"
+                    className="utility-tab-thumb"
+                    layoutId="utility-tab"
+                    transition={{ type: "spring", stiffness: 520, damping: 42 }}
+                  />
+                )}
+                {this.renderSidePanelIcon(destination.id)}
+                <span>{destination.label}</span>
+                {destination.shortcut && <kbd>{destination.shortcut}</kbd>}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="utility-panel-stage">
@@ -2475,30 +2497,43 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     return (
       <FluidProvider>
       <div className="app-shell">
-        <div className="reader-workspace">
-          {this.renderHeader(currentLabel, currentLabelZh)}
-          <div
-            aria-hidden={compactPickerOpen ? true : undefined}
-            className="reader-with-notes"
-            inert={compactPickerOpen ? true : undefined}
-          >
-            <main
-              aria-hidden={narrow && sidePanelOpen ? true : undefined}
-              className={`reader${this.state.atCanonEnd ? " canon-end" : ""}`}
-              inert={narrow && sidePanelOpen ? true : undefined}
+        <div className="app-main">
+          <div className="reader-workspace">
+            {this.renderHeader(currentLabel, currentLabelZh)}
+            <div
+              aria-hidden={compactPickerOpen ? true : undefined}
+              className="reader-with-notes"
+              inert={compactPickerOpen ? true : undefined}
             >
-              <div className="reader-inner">
-                {this.state.atCanonStart && <p className="canon-edge">Beginning of the canon</p>}
-                {chapters.map((chapter, index) =>
-                  this.renderChapter(chapter, index === 0, showEnglish, showChinese),
-                )}
-                {this.state.loadingMore && <p className="canon-edge loading">Loading the next chapter</p>}
-                {this.state.atCanonEnd && <p className="canon-edge">End of the canon</p>}
-                {!esvStatus.ok && <p className="source-notice" role="status">{esvStatus.message}</p>}
-              </div>
-            </main>
-            <AnimatePresence>{this.renderSidePanel(currentLabel, englishLabel, sourceId)}</AnimatePresence>
+              <main
+                aria-hidden={narrow && sidePanelOpen ? true : undefined}
+                className={`reader${this.state.atCanonEnd ? " canon-end" : ""}`}
+                inert={narrow && sidePanelOpen ? true : undefined}
+              >
+                <div className="reader-inner">
+                  {this.state.atCanonStart && <p className="canon-edge">Beginning of the canon</p>}
+                  {chapters.map((chapter, index) =>
+                    this.renderChapter(chapter, index === 0, showEnglish, showChinese),
+                  )}
+                  {this.state.loadingMore && <p className="canon-edge loading">Loading the next chapter</p>}
+                  {this.state.atCanonEnd && <p className="canon-edge">End of the canon</p>}
+                  {!esvStatus.ok && <p className="source-notice" role="status">{esvStatus.message}</p>}
+                </div>
+              </main>
+            </div>
           </div>
+        </div>
+
+        {/* The tools panel sits beside all of the app content — header and
+            reading surface together — as a second flex column. Opening it
+            reflows app-main to make room, so it draws as a full-height panel
+            coming out of the right edge. */}
+        <div
+          aria-hidden={compactPickerOpen ? true : undefined}
+          className="side-panel-layer"
+          inert={compactPickerOpen ? true : undefined}
+        >
+          <AnimatePresence>{this.renderSidePanel(currentLabel, englishLabel, sourceId)}</AnimatePresence>
         </div>
 
         {selectionToolbar && (

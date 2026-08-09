@@ -1108,6 +1108,13 @@ a:hover {
   align-items: flex-start;
 }
 
+/* Content-less wrapper around the tools panel. It keeps `inert` and
+   `aria-hidden` able to freeze the panel while the compact chapter menu is
+   open, without adding a box — the panel stays a direct flex item. */
+.side-panel-layer {
+  display: contents;
+}
+
 .reader {
   --reader-pad: 46px;
 
@@ -1984,7 +1991,19 @@ button:active:not(:disabled) {
 }
 
 .app-shell {
+  display: flex;
   min-height: 100dvh;
+}
+
+/* Everything except the tools panel lives in this column. The panel is a
+   second flex item beside it, so when the panel opens, the header and the
+   reading surface reflow together to clear it — the panel then covers the
+   full height of the window, header included. */
+.app-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
 }
 
 .app-header {
@@ -2866,12 +2885,18 @@ button:active:not(:disabled) {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+/* The tools panel is the app shell's second flex item, beside app-main, and
+   spans the full viewport height — so it covers the top of the window too.
+   app-main reflows to make room, which the header is part of, so the header
+   grid, the reading surface, and the fade all end at the panel's edge. */
 .notes-panel {
   position: sticky;
-  top: var(--header-height);
+  z-index: 80;
+  top: 0;
+  align-self: flex-start;
   display: flex;
   width: var(--panel-width, 392px);
-  height: calc(100dvh - var(--header-height));
+  height: 100dvh;
   flex: 0 0 auto;
   flex-direction: column;
   overflow: hidden;
@@ -3038,12 +3063,17 @@ button:active:not(:disabled) {
   backdrop-filter: blur(28px) saturate(155%);
 }
 
+/* Header reads as a translucent chrome layer: eyebrow + large title on the
+   left, a quiet glass close control on the right. No hard divider — the
+   segmented control below carries the section boundary. */
 .utility-panel-header {
+  z-index: 1;
   display: flex;
   min-height: 74px;
   align-items: center;
   justify-content: space-between;
-  padding: 13px 17px 9px 20px;
+  gap: 12px;
+  padding: 15px 18px 13px 20px;
 }
 
 .utility-panel-header p,
@@ -3061,64 +3091,98 @@ button:active:not(:disabled) {
 }
 
 .utility-panel-header h2 {
-  margin-top: 3px;
-  color: #24211d;
+  margin-top: 4px;
+  color: #1c1b19;
+  font-family: "Source Serif 4", Georgia, serif;
   font-size: 20px;
-  font-weight: 650;
-  letter-spacing: -0.025em;
-  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
   font-optical-sizing: auto;
 }
 
-.utility-panel-header > button {
+.utility-panel-close {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   place-items: center;
-  border: 1px solid rgb(48 44 38 / 7%);
+  flex: none;
+  border: 1px solid rgb(48 44 38 / 8%);
   border-radius: 50%;
-  background: rgb(235 234 229 / 78%);
-  color: #625e57;
+  background: rgb(255 255 255 / 38%);
+  color: #5f5b54;
   cursor: pointer;
-  font-size: 17px;
-  line-height: 1;
+  backdrop-filter: blur(10px) saturate(150%);
+  transition: background 130ms ease, color 130ms ease, transform 90ms ease-out;
+  -webkit-tap-highlight-color: transparent;
 }
 
+.utility-panel-close:hover {
+  background: rgb(255 255 255 / 74%);
+  color: #24221e;
+}
+
+.utility-panel-close:active {
+  transform: scale(0.94);
+}
+
+/* The four tools live in a single recessed capsule — a segmented control.
+   The active segment is one shared thumb that slides between positions, so
+   switching reads as continuous motion rather than a row of toggling tiles. */
 .utility-panel-nav {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 5px;
-  padding: 5px 12px 12px;
-  box-shadow: 0 14px 24px -26px rgb(35 31 26 / 55%);
+  gap: 2px;
+  margin: 0 14px 12px;
+  padding: 3px;
+  border: 1px solid rgb(48 44 38 / 7%);
+  border-radius: 14px;
+  background: rgb(233 232 227 / 55%);
+  box-shadow: inset 0 1px 2px rgb(48 44 38 / 5%);
+  backdrop-filter: blur(8px) saturate(140%);
 }
 
 .utility-panel-nav button {
   position: relative;
   display: grid;
   min-width: 0;
-  min-height: 57px;
+  min-height: 52px;
   grid-template-rows: 20px auto;
   align-content: center;
   justify-items: center;
-  gap: 4px;
-  padding: 7px 3px 6px;
-  border: 1px solid transparent;
-  border-radius: 12px;
+  gap: 3px;
+  padding: 6px 3px 5px;
+  border: 0;
+  border-radius: 11px;
   background: transparent;
   color: #77736c;
   cursor: pointer;
 }
 
 .utility-panel-nav button:hover {
-  background: rgb(235 234 229 / 62%);
-  color: #34312c;
+  color: #46423c;
 }
 
 .utility-panel-nav button.active {
-  border-color: rgb(66 101 143 / 11%);
-  background: rgb(225 231 238 / 76%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 75%);
-  color: #315275;
+  color: #24221e;
+}
+
+.utility-tab-thumb {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 86%);
+  box-shadow:
+    0 1px 2px rgb(40 37 32 / 12%),
+    0 6px 14px -8px rgb(40 37 32 / 28%);
+}
+
+.utility-panel-nav svg,
+.utility-panel-nav span,
+.utility-panel-nav kbd {
+  position: relative;
+  z-index: 1;
 }
 
 .utility-panel-nav svg {
@@ -3133,18 +3197,19 @@ button:active:not(:disabled) {
 .utility-panel-nav span {
   overflow: hidden;
   max-width: 100%;
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.005em;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.002em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .utility-panel-nav kbd {
   position: absolute;
-  top: 5px;
-  right: 6px;
-  color: #99958e;
+  top: 4px;
+  right: 7px;
+  color: #97938b;
   font-size: 7.5px;
   font-weight: 600;
 }
@@ -3201,6 +3266,20 @@ button:active:not(:disabled) {
 
 .utility-settings .settings-section + .settings-section {
   border-top: 1px solid rgb(48 44 38 / 7%);
+}
+
+/* The Display tab's English matches the verse type (Source Serif 4). */
+.utility-settings .menu-eyebrow,
+.utility-settings .menu-choice,
+.utility-settings .source-choice,
+.utility-settings .source-choice small,
+.utility-settings .toggle-row,
+.utility-settings .key-note,
+.utility-settings .key-entry button,
+.utility-settings .key-actions button,
+.utility-settings .size-control button,
+.utility-settings .spacing-control button {
+  font-family: "Source Serif 4", Georgia, serif;
 }
 
 .utility-search {
