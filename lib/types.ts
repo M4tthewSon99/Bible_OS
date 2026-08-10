@@ -67,6 +67,9 @@ export interface ChapterData {
   enText: Record<number, string>;
   zhText: Record<number, string>;
   blocks: ChapterBlock[];
+  /** A translation the network owed us and did not deliver. A chapter that
+      genuinely has no Chinese is not partial; one whose request failed is. */
+  missing?: Language[];
 }
 
 export interface ScriptureReference {

@@ -3,7 +3,9 @@
 import {
   Component,
   createRef,
+  Fragment,
   type ChangeEvent,
+  type CSSProperties,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -64,7 +66,8 @@ const SPACING = [
 ];
 const MAX_LOADED = 8;
 const HAS_CJK = /[\u3400-\u9fff]/;
-const PANEL_WIDTH_DEFAULT = 392;
+const PANEL_WIDTH_DEFAULT = 344;
+const PANEL_WIDTH_LEGACY_DEFAULT = 392;
 const PANEL_WIDTH_MIN = 300;
 const EMPTY_DEVOTION_IMPORT: DevotionImportUi = {
   phase: "idle",
@@ -166,7 +169,6 @@ interface State {
   landingVerseKey: string | null;
   selectionToolbar: SelectionToolbar | null;
   toast: Toast | null;
-  loadingMore: boolean;
   atCanonStart: boolean;
   atCanonEnd: boolean;
 }
@@ -199,6 +201,11 @@ interface SegmentLocation {
 interface OpenAtOptions {
   verse?: number | null;
   paragraphId?: string | null;
+}
+
+interface ScrollAnchor {
+  element: HTMLElement;
+  top: number;
 }
 
 export class ParallelBible extends Component<Record<string, never>, State> {
@@ -246,7 +253,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     landingVerseKey: null,
     selectionToolbar: null,
     toast: null,
-    loadingMore: false,
     atCanonStart: false,
     atCanonEnd: false,
   };
@@ -255,8 +261,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private readonly spotlightInputRef = createRef<HTMLInputElement>();
   private readonly sidePanelTriggerRef = createRef<HTMLButtonElement>();
   private readonly sidePanelRef = createRef<HTMLDivElement>();
-  private anchor: number | null = null;
-  private busy: "next" | "prev" | null = null;
+  private scrollAnchor: ScrollAnchor | null = null;
+  private busy: Record<"next" | "prev", boolean> = { next: false, prev: false };
+  private readonly healedChapters = new Set<string>();
+  private healTimers: ReturnType<typeof setTimeout>[] = [];
   private clearSave?: ReturnType<typeof setTimeout>;
   private devotionImportAbort?: AbortController;
   private lastY: number | null = null;
@@ -308,7 +316,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       const devotions = this.readJson<DevotionStore>(STORAGE.devotions);
       this.setState(
         (state) => ({
-          preferences: { ...state.preferences, ...(preferences || {}) },
+          preferences: { ...state.preferences, ...this.migratePreferences(preferences) },
           annotations: Array.isArray(annotations) ? annotations : [],
           devotions: devotions && typeof devotions === "object" && !Array.isArray(devotions)
             ? devotions
@@ -347,6 +355,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       this.selectionTimer,
       this.toastTimer,
     ].forEach((timer) => timer && clearTimeout(timer));
+    this.healTimers.forEach(clearTimeout);
+    this.healTimers = [];
     this.searchAbort?.abort();
     this.devotionImportToken = undefined;
     esvSearchClient.close();
@@ -362,11 +372,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         || this.state.menu === "chapters",
     );
     document.body.classList.toggle("resizing-panel", this.state.resizingPanel);
-    if (this.anchor !== null) {
-      const delta = document.documentElement.scrollHeight - this.anchor;
-      this.anchor = null;
-      if (Math.abs(delta) > 2) window.scrollBy(0, delta);
-    }
+    this.restoreScrollAnchor();
 
     if (this.pendingScroll) {
       const target = this.pendingScroll;
@@ -395,6 +401,17 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     root.style.setProperty("--os-gap", languages.length === 2 ? "66px" : "0px");
     root.style.setProperty("--size-pct", `${Math.round((sizeIndex < 0 ? 3 : sizeIndex) / (SIZES.length - 1) * 100)}%`);
     root.style.setProperty("--panel-width", `${preferences.panelWidth}px`);
+  }
+
+  /* The panel used to open at 392px, which crowds the reading column. A stored
+     width equal to the old default was never a choice anyone made — it is just
+     that default written back — so it yields to the new one. A width the reader
+     actually dragged to is kept. */
+  private migratePreferences(stored: Partial<Preferences> | null): Partial<Preferences> {
+    if (!stored) return {};
+    if (stored.panelWidth !== PANEL_WIDTH_LEGACY_DEFAULT) return stored;
+    const { panelWidth: _legacy, ...rest } = stored;
+    return rest;
   }
 
   private readJson<T>(key: string): T | null {
@@ -489,6 +506,12 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       landingVerseKey: options.verse ? `${key}:${options.verse}` : null,
     });
     this.setUrl(bookId, chapter);
+    // A jump starts a fresh reading run: nothing above is loaded, no earlier
+    // scroll position is meaningful, and no in-flight edge belongs to this list.
+    this.scrollAnchor = null;
+    this.busy = { next: false, prev: false };
+    this.lastY = null;
+    this.wentDeep = false;
     window.scrollTo(0, 0);
     await this.fetchInto(key, bookId, chapter);
 
@@ -509,16 +532,44 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     try {
       const data = await scripture.getChapter(bookId, chapter);
       this.patchChapter(key, { status: "ready", data });
+      this.healPartialChapter(key, bookId, chapter, data);
     } catch {
       this.patchChapter(key, { status: "error" });
     }
   };
 
-  private patchChapter(key: string, patch: Partial<LoadedChapter>): void {
+  /**
+   * A chapter can arrive whole in one translation and empty in the other,
+   * because that one request was dropped rather than because the translation
+   * has nothing there. Such a result is deliberately left out of the source
+   * cache, so a single quiet retry usually fills the gap in without the reader
+   * having to notice it, let alone ask.
+   */
+  private healPartialChapter(
+    key: string,
+    bookId: string,
+    chapter: number,
+    data: ChapterData,
+  ): void {
+    if (!data.missing?.length || this.healedChapters.has(key)) return;
+    this.healedChapters.add(key);
+    this.healTimers.push(setTimeout(() => {
+      void scripture.getChapter(bookId, chapter).then((healed) => {
+        if (healed.missing?.length) return;
+        if (!this.state.chapters.some((loaded) => loaded.key === key)) return;
+        this.patchChapter(key, { status: "ready", data: healed });
+      }).catch(() => {
+        // The reader keeps what did arrive; the notice offers a manual retry.
+      });
+    }, 1_600));
+  }
+
+  private patchChapter(key: string, patch: Partial<LoadedChapter>, onCommitted?: () => void): void {
+    this.captureScrollAnchor(this.anchorForFill(key));
     this.setState((state) => ({
       chapters: uniqueLoadedChapters(state.chapters)
         .map((chapter) => chapter.key === key ? { ...chapter, ...patch } : chapter),
-    }));
+    }), onCommitted);
   }
 
   private retryChapter = (key: string): void => {
@@ -529,11 +580,12 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   };
 
   private extend = async (direction: "next" | "prev"): Promise<void> => {
-    // Scroll, wheel, and layout changes can request opposite edges within the
-    // same frame. Only one edge mutation may own the chapter list at a time;
-    // otherwise each direction can overwrite the other's lock and reinsert an
-    // already loaded chapter.
-    if (this.busy) return;
+    // Each edge holds its own lock. A single shared one let a slow forward
+    // fetch swallow the backward request, and because nothing retries a
+    // dropped request, the chapter above simply never loaded. Concurrent edges
+    // are safe: they insert at opposite ends and the updater below rejects a
+    // key that is already loaded.
+    if (this.busy[direction]) return;
     const { chapters } = this.state;
     if (!chapters.length) return;
     const edge = direction === "next" ? chapters.at(-1) : chapters[0];
@@ -548,10 +600,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       return;
     }
 
-    this.busy = direction;
+    this.busy[direction] = true;
     const key = `${reference.bookId}/${reference.chapter}`;
     if (chapters.some((chapter) => chapter.key === key)) {
-      this.busy = null;
+      this.busy[direction] = false;
       return;
     }
     const entry: LoadedChapter = {
@@ -561,27 +613,30 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       status: "loading",
       label: scripture.refLabel(reference.bookId, reference.chapter),
     };
-    if (direction === "prev") this.anchor = document.documentElement.scrollHeight;
+    // Everything below the insertion point has to stay exactly where it is, so
+    // hold the chapter the placeholder is being pushed in front of.
+    if (direction === "prev") this.captureScrollAnchor(this.chapterBlockFor(chapters[0].key));
     this.setState((state) => {
       const uniqueChapters = uniqueLoadedChapters(state.chapters);
       if (uniqueChapters.some((chapter) => chapter.key === key)) {
-        return { chapters: uniqueChapters, loadingMore: false };
+        return { chapters: uniqueChapters };
       }
       return {
         chapters: direction === "next" ? [...uniqueChapters, entry] : [entry, ...uniqueChapters],
-        loadingMore: direction === "next",
       };
     });
 
     try {
       const data = await scripture.getChapter(reference.bookId, reference.chapter);
-      if (direction === "prev") this.anchor = document.documentElement.scrollHeight;
-      this.patchChapter(key, { status: "ready", data });
+      this.busy[direction] = false;
+      this.patchChapter(key, { status: "ready", data }, () => {
+        this.trimLoaded(direction);
+        this.requestEdges();
+      });
+      this.healPartialChapter(key, reference.bookId, reference.chapter, data);
     } catch {
-      this.patchChapter(key, { status: "error" });
-    } finally {
-      this.busy = null;
-      this.setState({ loadingMore: false }, () => this.trimLoaded(direction));
+      this.busy[direction] = false;
+      this.patchChapter(key, { status: "error" }, () => this.trimLoaded(direction));
     }
   };
 
@@ -608,27 +663,131 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }
 
     if (keep.length === chapters.length) return;
-    if (direction === "next") this.anchor = document.documentElement.scrollHeight;
+    // Anchoring to a block this trim is about to unmount silently forfeits the
+    // correction and drops the reader a chapter or more away, so the anchor is
+    // only ever taken from a survivor.
+    const surviving = new Set(keep.map((chapter) => chapter.key));
+    const visible = this.topVisibleChapterBlock();
+    const fallback = direction === "next" ? keep[0] : keep.at(-1);
+    this.captureScrollAnchor(
+      visible && surviving.has(visible.dataset.chapterKey || "")
+        ? visible
+        : fallback && this.chapterBlockFor(fallback.key),
+    );
     this.setState({ chapters: keep });
+  }
+
+  private headerLine(): number {
+    return document.querySelector<HTMLElement>(".app-header")?.getBoundingClientRect().bottom || 0;
+  }
+
+  private chapterBlocks(): HTMLElement[] {
+    return Array.from(document.querySelectorAll<HTMLElement>(".chapter-block"));
+  }
+
+  private chapterBlockFor(key: string): HTMLElement | null {
+    return document.querySelector<HTMLElement>(`.chapter-block[data-chapter-key="${key}"]`);
+  }
+
+  /** The chapter the reader is actually on — the first one still crossing the
+      header line, or the last one once every chapter sits above it. */
+  private topVisibleChapterBlock(): HTMLElement | null {
+    const line = this.headerLine();
+    const blocks = this.chapterBlocks();
+    return blocks.find((block) => block.getBoundingClientRect().bottom > line + 1)
+      || blocks.at(-1)
+      || null;
+  }
+
+  /**
+   * A chapter whose verses arrive while it sits above the reading position
+   * grows the page upward. Holding the chapter *after* it keeps the passage
+   * being read exactly where it is and lets the new verses fill the space the
+   * reader is travelling toward. Anchoring the growing chapter itself would
+   * instead shove that passage a screen or more further down the page.
+   */
+  private anchorForFill(key: string): HTMLElement | null {
+    const blocks = this.chapterBlocks();
+    const index = blocks.findIndex((block) => block.dataset.chapterKey === key);
+    if (index < 0) return null;
+    // The line is the top of the window, not the bottom of the header: the
+    // reading column runs underneath the header, so a chapter whose opening is
+    // merely behind the header is still one the reader is looking at, and it
+    // should grow downward from where its first line already sits.
+    if (blocks[index].getBoundingClientRect().top > -1) return null;
+    return blocks[index + 1] || null;
+  }
+
+  /**
+   * Preserve an actual piece of visible reading content rather than the
+   * document height. The browser may clamp scrollY when chapters are removed,
+   * and it applies its own scroll anchoring when content is inserted. Reading
+   * the chosen chapter's final position measures what is left after both, so
+   * no correction is applied twice.
+   */
+  private captureScrollAnchor(preferred?: HTMLElement | null): void {
+    const element = preferred?.isConnected ? preferred : this.topVisibleChapterBlock();
+    if (!element) return;
+    this.scrollAnchor = { element, top: element.getBoundingClientRect().top };
+  }
+
+  private restoreScrollAnchor(): void {
+    const anchor = this.scrollAnchor;
+    this.scrollAnchor = null;
+    if (!anchor?.element.isConnected) return;
+
+    const delta = anchor.element.getBoundingClientRect().top - anchor.top;
+    if (Math.abs(delta) <= 0.5) return;
+    window.scrollBy(0, delta);
+    // Do not interpret this layout correction as upward user intent on the
+    // next animation frame and accidentally request the opposite edge.
+    this.lastY = window.scrollY;
+  }
+
+  /* Scripture arrives over the network, so a chapter can be reached before its
+     verses are. Both edges are requested a screen and a half out, which is far
+     enough that the placeholder is normally already text by the time it is
+     scrolled into — the reader meets verses, not a waiting state. */
+  private aheadDistance(): number {
+    return Math.max(1_400, window.innerHeight * 1.5);
+  }
+
+  private behindDistance(): number {
+    return Math.max(600, window.innerHeight * 0.75);
+  }
+
+  /**
+   * Re-check both edges against the reading position. Called on scroll and
+   * again once a chapter settles, because a request skipped while its edge was
+   * in flight would otherwise wait for a scroll event that may never come —
+   * the reader can be standing still at the top of the loaded range.
+   */
+  private requestEdges(movingUp = true): void {
+    const y = window.scrollY;
+    if (y + window.innerHeight > document.documentElement.scrollHeight - this.aheadDistance()) {
+      void this.extend("next");
+    }
+    if (movingUp && y < this.behindDistance() && this.wentDeep) void this.extend("prev");
   }
 
   private onScroll = (): void => {
     if (this.scrollTick !== null) return;
     this.scrollTick = requestAnimationFrame(() => {
       this.scrollTick = null;
-      const documentElement = document.documentElement;
       const y = window.scrollY;
       const movingUp = y < (this.lastY ?? y) - 1;
-      if (y > 700) this.wentDeep = true;
-      if (y + window.innerHeight > documentElement.scrollHeight - 1_400) void this.extend("next");
-      if (movingUp && y < 420 && this.wentDeep) void this.extend("prev");
+      // Reading backwards only becomes an intent once the reader has moved down
+      // from where the passage opened; before that, an upward nudge is just the
+      // page settling.
+      if (y > this.behindDistance()) this.wentDeep = true;
+      this.requestEdges(movingUp);
       this.lastY = y;
       this.trackPosition();
     });
   };
 
   private onWheel = (event: WheelEvent): void => {
-    if (event.deltaY < 0 && window.scrollY < 420) void this.extend("prev");
+    if (event.deltaY < 0 && window.scrollY < this.behindDistance()) void this.extend("prev");
   };
 
   private trackPosition(): void {
@@ -664,7 +823,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
 
   private scrollToElement(element: HTMLElement): void {
     const top = element.getBoundingClientRect().top + window.scrollY - 132;
-    window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+    // A smooth travel across a whole chapter is exactly the vestibular motion
+    // the reduced-motion setting asks us to drop; arrive instead.
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: Math.max(0, top), behavior: reduced ? "auto" : "smooth" });
   }
 
   private onResize = (): void => {
@@ -2145,7 +2307,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const titleLabelZh = scripture.refLabelZh(chapter.bookId, chapter.chapter);
     if (chapter.status !== "ready" || !chapter.data) {
       return (
-        <div className="chapter-block" key={chapter.key}>
+        <div
+          className={`chapter-block ${chapter.status}`}
+          data-chapter-key={chapter.key}
+          key={chapter.key}
+        >
           <div className={titleClass} data-ck={chapter.key}>
             <h2>
               {showEnglish && <span>{chapter.label}</span>}
@@ -2158,26 +2324,60 @@ export class ParallelBible extends Component<Record<string, never>, State> {
               <button onClick={() => this.retryChapter(chapter.key)} type="button">Retry</button>
             </div>
           ) : (
-            <div className="reading-grid skeleton-grid">
-              {showEnglish && <ReadingSkeleton lines={4} />}
-              {showChinese && <ReadingSkeleton lines={3} />}
-            </div>
+            <>
+              <div
+                aria-label={`Loading ${chapter.label}`}
+                aria-live="polite"
+                className="chapter-loading-state"
+                role="status"
+              >
+                <span aria-hidden="true" className="chapter-loading-spinner" />
+                <span>Loading verses</span>
+              </div>
+              <div className="reading-grid skeleton-grid">
+                {showEnglish && <ReadingSkeleton paragraphs={[6, 5, 4]} />}
+                {showChinese && <ReadingSkeleton paragraphs={[5, 4, 3]} />}
+              </div>
+            </>
           )}
         </div>
       );
     }
 
+    /* An empty column is indistinguishable from a translation that has nothing
+       to say here, so a request that never arrived says so and offers the way
+       back rather than leaving the reader to wonder. */
+    const missing = (chapter.data.missing || []).filter(
+      (language) => language === "en" ? showEnglish : showChinese,
+    );
+
     return (
-      <div className="chapter-block" key={chapter.key}>
+      <div className="chapter-block ready" data-chapter-key={chapter.key} key={chapter.key}>
         {chapter.data.blocks.map((block) => {
           if (block.type === "title") {
+            /* A fragment, not a wrapper: an element here would become the
+               title's containing block and confine the sticky dock to it. */
             return (
-              <div className={titleClass} data-ck={chapter.key} key={block.id}>
-                <h2>
-                  {showEnglish && <span>{block.text}</span>}
-                  {showChinese && <span className="chapter-title-zh" lang="zh">{titleLabelZh}</span>}
-                </h2>
-              </div>
+              <Fragment key={block.id}>
+                <div className={titleClass} data-ck={chapter.key}>
+                  <h2>
+                    {showEnglish && <span>{block.text}</span>}
+                    {showChinese && <span className="chapter-title-zh" lang="zh">{titleLabelZh}</span>}
+                  </h2>
+                </div>
+                {missing.length > 0 && (
+                  <p className="chapter-partial" role="status">
+                    <span>
+                      {missing.includes("zh") && !missing.includes("en")
+                        ? "The Chinese text didn’t arrive for this chapter."
+                        : missing.includes("en") && !missing.includes("zh")
+                          ? "The English text didn’t arrive for this chapter."
+                          : "One of the translations didn’t arrive for this chapter."}
+                    </span>
+                    <button onClick={() => this.retryChapter(chapter.key)} type="button">Retry</button>
+                  </p>
+                )}
+              </Fragment>
             );
           }
           if (block.type === "heading") {
@@ -2421,7 +2621,21 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           </button>
         </div>
 
-        <nav aria-label="Bible tools" className="utility-panel-nav">
+        {/* The thumb is placed from the active index rather than measured from
+            the active button. A shared-layout animation reads viewport boxes,
+            and the panel is still animating open when the nav first mounts, so
+            it measured a stale position and flew in from outside the track. */}
+        <nav
+          aria-label="Bible tools"
+          className="utility-panel-nav"
+          style={{
+            "--tab-count": destinations.length,
+            "--tab-index": Math.max(0, destinations.findIndex((destination) => destination.id === sidePanelView)),
+          } as CSSProperties}
+        >
+          {/* A div, not a span: `.utility-panel-nav span` forces position
+              relative for the tab labels and would drag the thumb into flow. */}
+          <div aria-hidden="true" className="utility-tab-thumb" />
           {destinations.map((destination) => {
             const active = sidePanelView === destination.id;
             return (
@@ -2432,14 +2646,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                 onClick={() => this.openSidePanel(destination.id)}
                 type="button"
               >
-                {active && (
-                  <motion.div
-                    aria-hidden="true"
-                    className="utility-tab-thumb"
-                    layoutId="utility-tab"
-                    transition={{ type: "spring", stiffness: 520, damping: 42 }}
-                  />
-                )}
                 {this.renderSidePanelIcon(destination.id)}
                 <span>{destination.label}</span>
                 {destination.shortcut && <kbd>{destination.shortcut}</kbd>}
@@ -2515,7 +2721,6 @@ export class ParallelBible extends Component<Record<string, never>, State> {
                   {chapters.map((chapter, index) =>
                     this.renderChapter(chapter, index === 0, showEnglish, showChinese),
                   )}
-                  {this.state.loadingMore && <p className="canon-edge loading">Loading the next chapter</p>}
                   {this.state.atCanonEnd && <p className="canon-edge">End of the canon</p>}
                   {!esvStatus.ok && <p className="source-notice" role="status">{esvStatus.message}</p>}
                 </div>
@@ -2524,13 +2729,12 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           </div>
         </div>
 
-        {/* The tools panel sits beside all of the app content — header and
-            reading surface together — as a second flex column. Opening it
-            reflows app-main to make room, so it draws as a full-height panel
-            coming out of the right edge. */}
+        {/* The desktop layer reserves a flex column while the panel itself is
+            fixed to the viewport. Scripture can then grow, trim, or load
+            without moving the panel, while app-main still reflows around it. */}
         <div
           aria-hidden={compactPickerOpen ? true : undefined}
-          className="side-panel-layer"
+          className={`side-panel-layer${!narrow && sidePanelOpen ? " open" : ""}`}
           inert={compactPickerOpen ? true : undefined}
         >
           <AnimatePresence>{this.renderSidePanel(currentLabel, englishLabel, sourceId)}</AnimatePresence>
@@ -2604,10 +2808,17 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   }
 }
 
-function ReadingSkeleton({ lines }: { lines: number }) {
+/* Grouped into paragraphs so a chapter that has not arrived still occupies the
+   shape of scripture — the placeholder fills exactly what it reserves, and the
+   reader never scrolls into a held-open void. */
+function ReadingSkeleton({ paragraphs }: { paragraphs: number[] }) {
   return (
     <div aria-hidden="true" className="reading-skeleton">
-      {Array.from({ length: lines }, (_, index) => <span key={index} />)}
+      {paragraphs.map((lines, group) => (
+        <div className="skeleton-paragraph" key={group}>
+          {Array.from({ length: lines }, (_, index) => <span key={index} />)}
+        </div>
+      ))}
     </div>
   );
 }

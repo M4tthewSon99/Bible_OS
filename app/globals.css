@@ -1102,17 +1102,33 @@ a:hover {
   font-weight: 600;
 }
 
+/* The reading column begins at the top of the window and passes beneath the
+   header rather than starting below it. That is what lets a chapter title be
+   docked in the header at rest: its sticky position is already its resting
+   position, so the header carries the chapter name from the first frame —
+   while loading, at the top of a chapter, and all the way down. */
 .reader-with-notes {
   display: flex;
   width: 100%;
+  margin-top: calc(-1 * var(--header-height));
   align-items: flex-start;
 }
 
-/* Content-less wrapper around the tools panel. It keeps `inert` and
-   `aria-hidden` able to freeze the panel while the compact chapter menu is
-   open, without adding a box — the panel stays a direct flex item. */
+/* On desktop this wrapper is the panel's layout spacer. The panel itself is
+   viewport-fixed, so chapter insertion/removal can never move its controls;
+   the spacer still makes the reader reflow instead of sitting underneath it. */
 .side-panel-layer {
-  display: contents;
+  width: 0;
+  flex: 0 0 auto;
+  transition: width 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.side-panel-layer.open {
+  width: var(--panel-width, 344px);
+}
+
+.resizing-panel .side-panel-layer {
+  transition: none;
 }
 
 .reader {
@@ -1125,6 +1141,8 @@ a:hover {
 
 .reader-inner {
   max-width: 1180px;
+  /* Lands the first chapter's title exactly on the sticky dock line. */
+  padding-top: var(--chapter-title-top, 21px);
   margin: 0 auto;
 }
 
@@ -1293,6 +1311,10 @@ a:hover {
   background: #f2f1ee;
 }
 
+.skeleton-paragraph + .skeleton-paragraph {
+  margin-top: 26px;
+}
+
 .reading-skeleton span:nth-child(3) { width: 88%; }
 .reading-skeleton span:last-child { width: 64%; margin-bottom: 0; }
 
@@ -1320,10 +1342,6 @@ a:hover {
   color: #bdbab4;
   font-size: 11.5px;
   letter-spacing: 0.04em;
-}
-
-.canon-edge.loading {
-  animation: shimmer 1.6s ease-in-out infinite;
 }
 
 .source-notice {
@@ -2649,9 +2667,15 @@ button:active:not(:disabled) {
 /* Shared visual seam for every header-launched reader overlay. The gradient
    starts below the header so both search and chapter selection fade from the
    same bright edge into the same dimmed reading surface. */
+/* Above the chapter titles, not below them. The scrim only ever covers from
+   the header's lower edge down, so this draws exactly the line the reader
+   already reads: a title docked in the header is chrome and stays sharp, while
+   a title still sitting out on the page is scripture and dims with the rest of
+   it. At z-index 55 an undocked title floated over the blur, crisp and
+   unreachable, as though it belonged to the menu. */
 .reader-scrim {
   position: fixed;
-  z-index: 55;
+  z-index: 62;
   inset: var(--header-height) 0 0;
   background: var(--reader-scrim);
   backdrop-filter: blur(8px) saturate(78%);
@@ -2814,6 +2838,28 @@ button:active:not(:disabled) {
   background-size: 200% 100%;
 }
 
+/* Quiet: the chapter is still readable in the translation that did arrive, so
+   this reports a gap rather than an outage. */
+.chapter-partial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 0 0 28px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+.chapter-partial button {
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid rgb(54 49 42 / 12%);
+  border-radius: 9px;
+  background: rgb(247 246 242 / 82%);
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
 .chapter-error,
 .source-notice {
   border-color: rgb(54 49 42 / 9%);
@@ -2885,17 +2931,15 @@ button:active:not(:disabled) {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
-/* The tools panel is the app shell's second flex item, beside app-main, and
-   spans the full viewport height — so it covers the top of the window too.
-   app-main reflows to make room, which the header is part of, so the header
-   grid, the reading surface, and the fade all end at the panel's edge. */
+/* The panel is fixed to the viewport; .side-panel-layer reserves the matching
+   flex-column width so the header and reader still end at the panel's edge. */
 .notes-panel {
-  position: sticky;
+  position: fixed;
   z-index: 80;
   top: 0;
-  align-self: flex-start;
+  right: 0;
   display: flex;
-  width: var(--panel-width, 392px);
+  width: var(--panel-width, 344px);
   height: 100dvh;
   flex: 0 0 auto;
   flex-direction: column;
@@ -3130,6 +3174,7 @@ button:active:not(:disabled) {
    The active segment is one shared thumb that slides between positions, so
    switching reads as continuous motion rather than a row of toggling tiles. */
 .utility-panel-nav {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 2px;
@@ -3167,15 +3212,23 @@ button:active:not(:disabled) {
   color: #24221e;
 }
 
+/* Sits in the track, not inside the active button, and slides by whole
+   columns. The offset is pure arithmetic from the active index — the same
+   position on every render, so the thumb has nowhere stale to fly in from. */
 .utility-tab-thumb {
   position: absolute;
-  inset: 0;
   z-index: 0;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px - (var(--tab-count) - 1) * 2px) / var(--tab-count));
   border-radius: 11px;
   background: rgb(255 255 255 / 86%);
   box-shadow:
     0 1px 2px rgb(40 37 32 / 12%),
     0 6px 14px -8px rgb(40 37 32 / 28%);
+  transform: translateX(calc(var(--tab-index) * (100% + 2px)));
+  transition: transform 340ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .utility-panel-nav svg,
@@ -4270,6 +4323,53 @@ button:active:not(:disabled) {
   position: relative;
 }
 
+/* A chapter can be reached before its verses arrive. Reserve only as much room
+   as the skeleton actually fills: enough for the sticky title to hold its place
+   in the header, never so much that scrolling into the chapter means scrolling
+   into blank paper. */
+.chapter-block.loading {
+  min-height: 300px;
+}
+
+/* A loading chapter's title takes exactly the same release treatment as any
+   other. Pinning it opaque left it fully drawn as it rode up past the dock,
+   and because a title outranks the header in z-order it painted straight over
+   the header instead of vanishing behind it — two chapter names stacked at the
+   top of the window, the outgoing one sliced off by the window edge. The
+   release fade is what hides it: it reaches zero while the chapter's end is
+   still 75px down the window, well before the title starts rising at 58px. */
+
+.chapter-loading-state {
+  display: flex;
+  /* Kept shallow: this band exists only while the request is in flight, and
+     every pixel of it is height that disappears when the verses land. */
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #77736c;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 12px;
+  letter-spacing: 0.015em;
+}
+
+.chapter-loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid rgb(66 101 143 / 18%);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: chapter-loading-spin 720ms linear infinite;
+}
+
+.chapter-block.loading .skeleton-grid {
+  opacity: 0.72;
+}
+
+@keyframes chapter-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes chapter-title-release {
   0% {
     opacity: 1;
@@ -4334,12 +4434,16 @@ button:active:not(:disabled) {
   }
 }
 
-.chapter-title.first {
-  margin-top: 72px;
-}
+/* No lead-in above the opening title: the sticky rule above already zeroes the
+   margin for both, and the reading column now starts at the dock line, so the
+   first chapter's title rests in the header exactly where every later
+   chapter's title arrives.
 
-.chapter-title + .reading-grid {
-  padding-top: 24px;
+   The air belongs underneath instead, so the first line of scripture clears the
+   header rather than hiding beneath it. Uniform across chapters, so a chapter
+   prepended above the reader cannot change the spacing of the one below it. */
+.chapter-title + * {
+  padding-top: 52px;
 }
 
 .chapter-title h2 {
@@ -4363,6 +4467,10 @@ button:active:not(:disabled) {
 }
 
 @media (max-width: 1099px) {
+  .side-panel-layer {
+    display: contents;
+  }
+
   :root {
     --chapter-title-size: clamp(28px, 3.2vw, 34px);
     --chapter-title-top: 24px;
@@ -4382,10 +4490,6 @@ button:active:not(:disabled) {
 
   .chapter-block::after {
     height: 64px;
-  }
-
-  .chapter-title.first {
-    margin-top: 48px;
   }
 
   .chapter-title h2 {
@@ -4448,5 +4552,13 @@ button:active:not(:disabled) {
   .notes-panel,
   .chapter-title {
     transform: none !important;
+  }
+
+  /* Both of these are slow looping oscillations over a large area — the kind
+     reduced motion exists to stop. The waiting state still reads: the skeleton
+     holds its shape and the label still says what is happening. */
+  .chapter-loading-spinner,
+  .reading-skeleton {
+    animation: none;
   }
 }

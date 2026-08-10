@@ -5,6 +5,7 @@ import type {
   ChapterData,
   ChapterSide,
   EnglishSourceId,
+  Language,
   ScriptureReference,
   SearchResult,
   Testament,
@@ -371,11 +372,23 @@ export async function getChapter(bookId: string, chapter: number): Promise<Chapt
   if (pending) return pending;
 
   const job = (async () => {
-    const [esv, web, chinese] = await Promise.all([
+    /* A rejected request and a translation that simply has nothing here look
+       identical once both collapse to an empty verse list. They are tracked
+       apart so a dropped request is never mistaken for an answer. */
+    const settle = (request: Promise<BibleApiResponse>) => request.then(
+      (value) => ({ ok: true, value }),
+      () => ({ ok: false, value: { verses: [] } as BibleApiResponse }),
+    );
+    const [esv, webResult, chineseResult] = await Promise.all([
       fetchEnglishOverride(bookId, chapter),
-      getJSON<BibleApiResponse>(`${API}/web/${bookId}/${chapter}`).catch(() => ({ verses: [] })),
-      getJSON<BibleApiResponse>(`${API}/cuv/${bookId}/${chapter}`).catch(() => ({ verses: [] })),
+      settle(getJSON<BibleApiResponse>(`${API}/web/${bookId}/${chapter}`)),
+      settle(getJSON<BibleApiResponse>(`${API}/cuv/${bookId}/${chapter}`)),
     ]);
+    const web = webResult.value;
+    const chinese = chineseResult.value;
+    const missing: Language[] = [];
+    if (!esv && !webResult.ok) missing.push("en");
+    if (!chineseResult.ok) missing.push("zh");
 
     const source = esv ? "ESV" : "WEB";
     const english = esv ? { verses: esv } : web;
@@ -442,9 +455,15 @@ export async function getChapter(bookId: string, chapter: number): Promise<Chapt
       enText,
       zhText,
       blocks,
+      ...(missing.length ? { missing } : {}),
     };
 
-    chapterCache.set(key, data);
+    /* Never cache a chapter a failed request hollowed out. Caching one meant a
+       single dropped Chinese response left that chapter English-only for the
+       rest of the session, long after the network recovered — reopening it
+       just served the same gap back. Leaving it uncached lets the next request
+       for it actually go out again. */
+    if (!missing.length) chapterCache.set(key, data);
     trimEsvCache();
     inflight.delete(key);
     return data;

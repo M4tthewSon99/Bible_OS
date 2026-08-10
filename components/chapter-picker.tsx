@@ -320,7 +320,13 @@ export function ChapterPicker({
         </AnimatePresence>
       </SurfacePortal>
 
-      <SurfacePortal enabled={compact}>
+      {/* Portalled at every width, not just compact. The header carries its own
+          z-index, so it is a stacking context: nested inside it the menu's
+          z-index counted only against its siblings there, and the whole card
+          still landed at the header's level — underneath a chapter title, which
+          sits one step above the header so it can dock into it. The menu is
+          fixed and viewport-centred, so leaving the header costs it nothing. */}
+      <SurfacePortal>
         <AnimatePresence>
           {open && (
             <>
