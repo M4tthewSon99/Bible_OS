@@ -185,6 +185,16 @@ export interface DevotionImportDraft {
 
 export type DevotionImportMethod = "local-ocr" | "cloud-vision";
 
+/* The photographed page, held as an object URL for as long as the import is
+   on screen. A transcription cannot be checked without the thing it was
+   transcribed from, so this is what makes the review step more than
+   proofreading in the dark. */
+export interface DevotionSourceView {
+  url: string;
+  width: number;
+  height: number;
+}
+
 export interface DevotionImportUi {
   phase: "idle" | "recognizing" | "review" | "error";
   method?: DevotionImportMethod;
@@ -193,6 +203,18 @@ export interface DevotionImportUi {
   error: string | null;
   draft: DevotionImportDraft | null;
   replacePending: boolean;
+  source: DevotionSourceView | null;
+  /* Blocks the reader dropped during review. Held rather than deleted so the
+     removal can be undone — an OCR mistake and a genuinely unwanted block look
+     identical until you have re-read the photo. */
+  removedBlocks: RemovedDevotionBlock[];
+}
+
+export interface RemovedDevotionBlock {
+  sectionId: string;
+  index: number;
+  block: DevotionTemplateBlock;
+  answer: string;
 }
 
 export interface DevotionEntry {

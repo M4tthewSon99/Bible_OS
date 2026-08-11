@@ -1,5 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { blockForDevotionDisplay, sectionsForDevotionDisplay } from "../lib/devotion-layout";
+import {
+  blockForDevotionDisplay,
+  devotionReferenceQuery,
+  sectionsForDevotionDisplay,
+} from "../lib/devotion-layout";
+
+describe("printed reference normalization", () => {
+  it("drops the translation a handout prints after the passage", () => {
+    expect(devotionReferenceQuery("2 Samuel 2 (ESV)")).toBe("2 Samuel 2");
+  });
+
+  it("resolves a verse range to the verse the reader starts at", () => {
+    expect(devotionReferenceQuery("2 Samuel 2:8-11")).toBe("2 Samuel 2:8");
+    expect(devotionReferenceQuery("2 Samuel 2:8–11")).toBe("2 Samuel 2:8");
+  });
+
+  it("collapses a chapter range to its first chapter", () => {
+    expect(devotionReferenceQuery("Genesis 1-3")).toBe("Genesis 1");
+  });
+
+  it("leaves a plain reference and its trailing punctuation alone", () => {
+    expect(devotionReferenceQuery("  Psalm  23 ")).toBe("Psalm 23");
+    expect(devotionReferenceQuery("John 3:16.")).toBe("John 3:16");
+  });
+});
 
 describe("imported devotion display normalization", () => {
   it("turns a legacy text question into an answerable prompt without changing its ID", () => {

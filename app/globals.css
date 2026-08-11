@@ -3860,12 +3860,37 @@ button:active:not(:disabled) {
   font-size: 11.5px;
 }
 
-.devotion-date-button {
+/* The day and the reading mode belong to the same decision — which page am I
+   looking at, and am I writing on it — so they share one row instead of
+   stacking two near-empty bands above the page. */
+.devotion-day-bar {
   display: flex;
-  width: 100%;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 2px;
+}
+
+.devotion-day-bar .editor-mode {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+}
+
+/* Tighter than the standalone control: sharing the row with the date is worth
+   more than the extra padding, and the date should not have to truncate. */
+.devotion-day-bar .editor-mode button {
+  min-height: 26px;
+  padding: 3px 9px;
+  font-size: 11px;
+}
+
+.devotion-date-button {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -3877,18 +3902,20 @@ button:active:not(:disabled) {
   text-align: left;
 }
 
+.devotion-date-button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .devotion-date-button svg {
   flex: 0 0 auto;
   color: var(--faint);
-  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), color 140ms ease-out;
+  transition: color 140ms ease-out;
 }
 
 .devotion-date-button:hover svg {
   color: var(--muted);
-}
-
-.devotion-date-button.open svg {
-  transform: rotate(180deg);
 }
 
 .devotion-block {
@@ -3936,28 +3963,44 @@ button:active:not(:disabled) {
   line-height: 1.58;
 }
 
-.devotion-empty-state button,
-.devotion-import-actions > button:first-of-type {
+.devotion-primary-button {
   min-height: 34px;
-  padding: 0 13px;
+  padding: 0 14px;
   border: 1px solid var(--accent);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--accent);
   color: #fff;
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
+  transition: background 140ms ease-out, transform 110ms ease-out;
 }
 
-.devotion-empty-state button:hover,
-.devotion-import-actions > button:first-of-type:hover {
+.devotion-primary-button:hover:not(:disabled) {
   background: #35597f;
 }
 
+/* Feedback belongs on the press, not on the release. */
+.devotion-primary-button:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
+.devotion-primary-button:disabled {
+  border-color: #dedcd7;
+  background: #dedcd7;
+  color: #fbfbfa;
+  cursor: not-allowed;
+}
+
 .devotion-empty-state .devotion-empty-secondary {
-  border-color: #e2e0db;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid #e2e0db;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -3968,24 +4011,93 @@ button:active:not(:disabled) {
 }
 
 .devotion-empty-state small {
+  max-width: 30rem;
   color: var(--faint);
   font-size: 10.5px;
+  line-height: 1.5;
 }
 
+/* The photo stays on screen while it is read, so the wait is spent looking at
+   the thing being worked on rather than at an abstract spinner. */
 .devotion-import-status {
   display: grid;
   justify-items: center;
-  gap: 7px;
-  padding: 48px 12px;
+  gap: 8px;
+  padding: 34px 12px;
   text-align: center;
 }
 
+.devotion-reading-frame {
+  position: relative;
+  width: 132px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow:
+    inset 0 0 0 1px rgb(48 44 38 / 11%),
+    0 14px 30px -20px rgb(33 30 25 / 60%);
+}
+
+.devotion-reading-frame img {
+  display: block;
+  width: 100%;
+}
+
+.devotion-reading-placeholder {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  background: repeating-linear-gradient(
+    to bottom,
+    #f3f2ef 0 6px,
+    #fbfbf9 6px 15px
+  );
+}
+
+.devotion-reading-sweep {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 38%;
+  background: linear-gradient(
+    to bottom,
+    rgb(74 111 165 / 0%) 0%,
+    rgb(74 111 165 / 13%) 52%,
+    rgb(255 255 255 / 58%) 72%,
+    rgb(74 111 165 / 0%) 100%
+  );
+  animation: devotion-sweep 2.1s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes devotion-sweep {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(363%); }
+}
+
 .devotion-import-status p {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   color: var(--ink);
   font-family: "Source Serif 4", Georgia, serif;
   font-size: 17px;
   font-weight: 600;
+  letter-spacing: -0.014em;
+}
+
+.devotion-progress-track {
+  width: 172px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgb(48 44 38 / 9%);
+}
+
+.devotion-progress-track span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transform-origin: left center;
 }
 
 .devotion-import-status small {
@@ -3994,17 +4106,70 @@ button:active:not(:disabled) {
   font-size: 11px;
 }
 
-.devotion-import-spinner {
-  width: 22px;
-  height: 22px;
-  border: 2px solid rgb(66 101 143 / 18%);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: devotion-spin 760ms linear infinite;
+/* The photographed page, reachable both while checking an import and long
+   afterwards. Collapsed it is a thumbnail; expanded it holds the photo's own
+   aspect ratio so the panel never jumps to a guessed height. */
+.devotion-source-card {
+  margin: 0 0 16px;
+  overflow: hidden;
+  border: 1px solid rgb(48 44 38 / 9%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 62%);
 }
 
-@keyframes devotion-spin {
-  to { transform: rotate(1turn); }
+.devotion-source-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 11px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.devotion-source-toggle:hover {
+  background: rgb(48 44 38 / 3%);
+}
+
+.devotion-source-thumb {
+  width: 38px;
+  height: 46px;
+  flex: 0 0 38px;
+  border-radius: 6px;
+  background-position: top center;
+  background-size: cover;
+  box-shadow: inset 0 0 0 1px rgb(48 44 38 / 12%);
+}
+
+.devotion-source-labels {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.devotion-source-title {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.devotion-source-hint {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.devotion-source-full {
+  overflow: hidden;
+}
+
+.devotion-source-full img {
+  display: block;
+  width: 100%;
+  border-top: 1px solid rgb(48 44 38 / 8%);
 }
 
 .devotion-secondary-button {
@@ -4027,7 +4192,7 @@ button:active:not(:disabled) {
   margin: 18px 0;
   padding: 13px;
   border: 1px solid #ead4d0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: #fffafa;
 }
 
@@ -4038,15 +4203,59 @@ button:active:not(:disabled) {
   line-height: 1.45;
 }
 
+/* An error is a place to try again from, not just something to acknowledge. */
+.devotion-import-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.devotion-import-error-actions > button:first-child {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid #c9a09b;
+  border-radius: 6px;
+  background: transparent;
+  color: #8a5a55;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
 .devotion-import-review {
   display: grid;
   gap: 15px;
   padding-top: 2px;
 }
 
+.devotion-review-summary {
+  display: grid;
+  gap: 4px;
+}
+
+.devotion-review-found {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
 .devotion-review-field {
   display: grid;
   gap: 5px;
+}
+
+/* The one field the reader must resolve is marked as such, instead of being
+   left to explain a dead Save button by process of elimination. */
+.devotion-review-field.needs-attention input {
+  border-color: #c39a56;
+  box-shadow: 0 0 0 3px rgb(195 154 86 / 14%);
+}
+
+.devotion-review-field small {
+  color: #86662d;
+  font-size: 10.5px;
+  line-height: 1.4;
 }
 
 .devotion-review-field > span,
@@ -4092,13 +4301,24 @@ button:active:not(:disabled) {
 .devotion-review-block-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 7px;
+}
+
+.devotion-review-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgb(74 111 165 / 10%);
+  color: var(--accent);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .devotion-review-block-head button {
   padding: 0;
+  margin-left: auto;
   border: 0;
   background: transparent;
   color: #8a5a55;
@@ -4127,15 +4347,59 @@ button:active:not(:disabled) {
   background: #fff !important;
 }
 
-.devotion-import-actions {
+/* Blocks lifted out during review wait here rather than disappearing. The
+   camera saw the page once; a mistaken removal should cost a click, not a
+   re-import. */
+.devotion-removed-tray {
+  overflow: hidden;
+}
+
+.devotion-removed-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid #f0efec;
+}
+
+.devotion-removed-row span {
+  overflow: hidden;
+  flex: 1;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.devotion-removed-row button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* Keeping the page stays reachable from anywhere in a long review instead of
+   living at the end of a scroll the reader has to earn. It rides the panel's
+   own bottom padding, so it sits flush on the footer above. */
+.devotion-review-bar {
+  position: sticky;
+  z-index: 3;
+  bottom: -30px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding-top: 4px;
+  margin: 4px -22px -30px;
+  padding: 12px 22px max(14px, env(safe-area-inset-bottom));
+  border-top: 1px solid rgb(48 44 38 / 7%);
+  background: rgb(250 250 248 / 88%);
+  backdrop-filter: blur(18px) saturate(150%);
 }
 
-.devotion-import-actions > p {
+.devotion-review-bar > p {
   width: 100%;
   margin: 0 0 2px;
   color: #8a5a55;
@@ -4147,7 +4411,7 @@ button:active:not(:disabled) {
   min-height: 32px;
   padding: 0 11px;
   border: 1px solid #a96660;
-  border-radius: 6px;
+  border-radius: 7px;
   background: #a96660;
   color: #fff;
   cursor: pointer;
@@ -4156,57 +4420,177 @@ button:active:not(:disabled) {
 }
 
 .imported-devotion {
-  padding-top: 5px;
+  padding-top: 4px;
 }
 
-.devotion-date-ribbon {
-  margin: 0 0 19px;
-  padding: 11px 12px;
-  background: #807f7d;
-  color: #fff;
-  font-size: 13px;
+/* Replaces the printed page's date ribbon. The date is already on the button
+   above, so the masthead spends its weight on the two things the ribbon never
+   carried: where to read, and how much of the page is still unanswered. */
+.devotion-masthead {
+  margin: 0 0 24px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid rgb(48 44 38 / 8%);
+}
+
+.devotion-masthead-eyebrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 7px;
+  color: #6d7f95;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.015em;
-  text-align: center;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.devotion-masthead-eyebrow span:last-child {
+  color: var(--faint);
+  letter-spacing: 0.07em;
+  white-space: nowrap;
 }
 
 .devotion-bible-text {
-  margin: 0 0 27px;
+  margin: 0 0 12px;
   color: var(--ink);
   font-family: "Source Serif 4", Georgia, serif;
-  font-size: 15px;
+  font-size: 21px;
   font-weight: 700;
   font-optical-sizing: auto;
-  letter-spacing: -0.012em;
-  line-height: 1.42;
+  /* Large type reads too loose at its default tracking. */
+  letter-spacing: -0.024em;
+  line-height: 1.2;
 }
 
-.devotion-bible-text span {
-  font-family: inherit;
-  font-weight: 700;
+.devotion-answered-track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgb(48 44 38 / 8%);
+}
+
+.devotion-answered-track span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transform-origin: left center;
 }
 
 .devotion-source-section {
-  margin-bottom: 34px;
+  margin-bottom: 30px;
 }
 
+/* Sticks so a reader deep in Option 2's questions can still see which option
+   they are answering. Translucent, with the page passing beneath — the
+   material is the boundary, so there is no rule to draw. */
 .devotion-source-section h2 {
-  margin: 0 0 13px;
+  position: sticky;
+  z-index: 2;
+  /* Cancels the scroll container's own top padding so the heading parks flush
+     against the panel chrome instead of floating a gap the page shows through. */
+  top: -20px;
+  margin: 0 -22px 13px;
+  padding: 11px 22px 9px;
+  background: rgb(248 248 246 / 82%);
+  backdrop-filter: blur(14px) saturate(150%);
   color: var(--ink);
   font-family: "Source Serif 4", Georgia, serif;
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 750;
   font-optical-sizing: auto;
-  letter-spacing: -0.025em;
-  line-height: 1.18;
+  letter-spacing: -0.022em;
+  line-height: 1.2;
+}
+
+/* A scroll edge rather than a rule: text dissolves into the heading's material
+   instead of being clipped by a hard line. */
+.devotion-source-section h2::after {
+  position: absolute;
+  right: 0;
+  bottom: -10px;
+  left: 0;
+  height: 10px;
+  background: linear-gradient(to bottom, rgb(248 248 246 / 70%), rgb(248 248 246 / 0%));
+  content: "";
+  pointer-events: none;
 }
 
 .devotion-source-reference {
-  margin: -3px 0 10px;
+  margin: -2px 0 11px;
   color: var(--muted);
   font-family: "Source Serif 4", Georgia, serif;
   font-size: 12.5px;
   line-height: 1.35;
+}
+
+/* A printed reference in a Bible app is a way into the text. The arrow is
+   always visible, not hover-revealed — a touch reader gets no hover, and an
+   affordance nobody can see is not one. */
+.devotion-reference-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 11px;
+  margin-left: -11px;
+  border: 1px solid rgb(74 111 165 / 20%);
+  border-radius: 999px;
+  background: rgb(74 111 165 / 6%);
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  transition: background 140ms ease-out, border-color 140ms ease-out, transform 110ms ease-out;
+}
+
+.devotion-reference-link svg {
+  flex: 0 0 auto;
+  opacity: 0.55;
+  transition: opacity 140ms ease-out, transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.devotion-reference-link:hover {
+  border-color: rgb(74 111 165 / 38%);
+  background: rgb(74 111 165 / 11%);
+}
+
+.devotion-reference-link:hover svg {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+.devotion-reference-link:active {
+  transform: scale(0.98);
+}
+
+/* At masthead size the pill would out-shout the passage name it wraps, so the
+   Bible Text keeps its type and takes the arrow inline. */
+.devotion-bible-text .devotion-reference-link {
+  padding: 0;
+  margin-left: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  gap: 8px;
+}
+
+.devotion-bible-text .devotion-reference-link > span {
+  text-decoration: underline;
+  text-decoration-color: rgb(74 111 165 / 34%);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+}
+
+.devotion-bible-text .devotion-reference-link svg {
+  width: 13px;
+  height: 13px;
+  color: var(--accent);
+}
+
+.devotion-bible-text .devotion-reference-link:hover > span {
+  text-decoration-color: var(--accent);
 }
 
 .devotion-source-text {
@@ -4229,38 +4613,131 @@ button:active:not(:disabled) {
   line-height: 1.55;
 }
 
+/* Each question and its answer are one object, so they get one surface. An
+   answered card recedes and an unanswered one stays bright: the eye should
+   land on what is left to do. */
 .devotion-question {
-  margin: 0 0 25px;
+  margin: 0 0 14px;
+  padding: 13px 13px 14px;
+  border: 1px solid rgb(48 44 38 / 9%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 62%);
+  transition: background 200ms ease-out, border-color 200ms ease-out;
 }
 
-.devotion-question > p {
-  position: relative;
-  margin: 0 0 10px;
-  padding-left: 17px;
-  color: var(--ink-soft);
-  font-family: "Source Serif 4", Georgia, serif;
-  font-size: 13px;
-  letter-spacing: -0.006em;
-  line-height: 1.52;
+.devotion-question.answered {
+  border-color: rgb(48 44 38 / 6%);
+  background: rgb(255 255 255 / 28%);
 }
 
-.devotion-question > p::before {
-  position: absolute;
-  left: 1px;
+.devotion-question-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.devotion-question-number {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: rgb(48 44 38 / 8%);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  place-items: center;
+  transition: background 200ms ease-out, color 200ms ease-out;
+}
+
+.devotion-question-number > span {
+  display: grid;
+  place-items: center;
+}
+
+.devotion-question.answered .devotion-question-number {
+  background: var(--accent);
+  color: #fff;
+}
+
+.devotion-question-head p {
+  margin: 0;
   color: var(--ink);
-  content: "•";
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 13.5px;
+  letter-spacing: -0.006em;
+  line-height: 1.5;
 }
 
 .imported-devotion .devotion-editor {
-  min-height: 132px;
-  padding: 12px 13px;
-  border-color: rgb(48 44 38 / 12%);
+  min-height: 104px;
+  padding: 11px 12px;
+  border-color: rgb(48 44 38 / 11%);
   border-radius: 10px;
-  background: rgb(255 255 255 / 84%);
+  background: rgb(255 255 255 / 86%);
   box-shadow: inset 0 1px 2px rgb(48 44 38 / 4%);
   font-family: "Source Serif 4", Georgia, serif;
   font-size: 13px;
   line-height: 1.55;
+}
+
+/* Footer plus the sheet that grows out of it. */
+.devotion-panel-footer {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Enters and leaves along the footer edge it belongs to, so where it came
+   from is never in question. */
+.devotion-more-sheet {
+  display: grid;
+  overflow: hidden;
+  border-top: 1px solid rgb(48 44 38 / 7%);
+  background: rgb(250 250 248 / 92%);
+  backdrop-filter: blur(18px) saturate(150%);
+}
+
+.devotion-more-sheet button {
+  display: block;
+  width: 100%;
+  padding: 11px 20px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.devotion-more-sheet button:hover {
+  background: rgb(48 44 38 / 4%);
+}
+
+.devotion-more-destructive {
+  border-top: 1px solid rgb(48 44 38 / 6%) !important;
+  color: #a3564f !important;
+}
+
+.devotion-more-button {
+  display: grid;
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  color: var(--muted);
+  place-items: center;
+}
+
+.devotion-more-button[aria-expanded="true"] {
+  background: rgb(232 231 226 / 88%);
+  color: var(--ink);
+}
+
+/* The review takes the panel over; the day picker below it would only be a
+   second, contradicting way to answer the same question. */
+.notes-content.devotion-focused {
+  padding-top: 8px;
 }
 
 .note-preview ul ul,
@@ -4516,6 +4993,19 @@ button:active:not(:disabled) {
   .notes-backdrop {
     backdrop-filter: none;
   }
+
+  .devotion-source-section h2,
+  .devotion-review-bar,
+  .devotion-more-sheet {
+    background: #f7f7f5;
+    backdrop-filter: none;
+  }
+
+  .devotion-question,
+  .devotion-question.answered,
+  .devotion-source-card {
+    background: #fff;
+  }
 }
 
 @media (prefers-contrast: more) {
@@ -4539,6 +5029,21 @@ button:active:not(:disabled) {
   .translation-labels {
     background: #fff;
   }
+
+  .devotion-question,
+  .devotion-source-card {
+    border-color: #78736c;
+    background: #fff;
+  }
+
+  .devotion-reference-link {
+    border-color: var(--accent);
+    background: #fff;
+  }
+
+  .devotion-source-section h2 {
+    background: #fff;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4560,5 +5065,26 @@ button:active:not(:disabled) {
   .chapter-loading-spinner,
   .reading-skeleton {
     animation: none;
+  }
+
+  /* The sweep is a loop travelling over the whole preview, so it goes. The
+     photo, the headline, the determinate bar and the stage label all remain,
+     which is where the actual information was. */
+  .devotion-reading-sweep {
+    animation: none;
+    opacity: 0.32;
+  }
+
+  .devotion-question,
+  .devotion-question-number,
+  .devotion-reference-link,
+  .devotion-reference-link svg,
+  .devotion-primary-button {
+    transition: none;
+  }
+
+  .devotion-reference-link:active,
+  .devotion-primary-button:active:not(:disabled) {
+    transform: none;
   }
 }

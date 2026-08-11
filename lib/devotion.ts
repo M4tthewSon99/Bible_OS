@@ -109,6 +109,17 @@ export function formatDateLabel(dateKey: string): string {
   return `${WEEKDAY_NAMES[date.getDay()]}, ${MONTH_NAMES[index - 1]} ${day}`;
 }
 
+/**
+ * The same date for a control that shares its row with the mode toggle. The
+ * weekday stays whole because that is what a reader scans for; the month gives
+ * up its tail so no combination of the two has to truncate.
+ */
+export function formatCompactDateLabel(dateKey: string): string {
+  const [year, index, day] = dateKey.split("-").map(Number);
+  const date = new Date(year, index - 1, day);
+  return `${WEEKDAY_NAMES[date.getDay()]}, ${MONTH_NAMES[index - 1].slice(0, 3)} ${day}`;
+}
+
 export function emptyEntry(dateKey: string, ref: string | null): DevotionEntry {
   const now = new Date().toISOString();
   return {

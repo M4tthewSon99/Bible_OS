@@ -1,3 +1,4 @@
+import { resizedPhoto } from "@/lib/devotion-photo";
 import type { DevotionImportDraft } from "@/lib/types";
 import type { OcrProgress } from "@/lib/devotion-import";
 
@@ -11,34 +12,8 @@ function renamedPhoto(photo: File): string {
  * A 2,000px edge preserves small printed references and gives compact
  * screenshots enough visual tokens to read their fine text. */
 export async function prepareVisionPhoto(photo: File): Promise<File> {
-  const source = URL.createObjectURL(photo);
-  try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const element = new Image();
-      element.onload = () => resolve(element);
-      element.onerror = () => reject(new Error("This photo could not be prepared for vision import."));
-      element.src = source;
-    });
-    const longestEdge = Math.max(image.naturalWidth, image.naturalHeight);
-    if (longestEdge === TARGET_EDGE) return photo;
-
-    const scale = TARGET_EDGE / longestEdge;
-    const width = Math.max(1, Math.round(image.naturalWidth * scale));
-    const height = Math.max(1, Math.round(image.naturalHeight * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("This browser could not prepare the photo.");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, width, height);
-    context.drawImage(image, 0, 0, width, height);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
-    if (!blob) throw new Error("This photo could not be prepared for vision import.");
-    return new File([blob], renamedPhoto(photo), { type: "image/jpeg" });
-  } finally {
-    URL.revokeObjectURL(source);
-  }
+  const { blob } = await resizedPhoto(photo, TARGET_EDGE, 0.9);
+  return new File([blob], renamedPhoto(photo), { type: "image/jpeg" });
 }
 
 export async function recognizeDevotionWithVision(

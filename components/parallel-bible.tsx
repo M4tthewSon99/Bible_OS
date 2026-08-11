@@ -34,6 +34,15 @@ import { markdown } from "@/lib/markdown";
 import { importWithLocalOcrFallback } from "@/lib/devotion-import-fallback";
 import { photoValidationError, recognizeDevotionPhoto } from "@/lib/devotion-import";
 import { recognizeDevotionWithVision } from "@/lib/devotion-vision-client";
+import { resizedPhoto } from "@/lib/devotion-photo";
+import { devotionReferenceQuery } from "@/lib/devotion-layout";
+import {
+  deleteDevotionSource,
+  listDevotionSourceDates,
+  readDevotionSource,
+  writeDevotionSource,
+  type DevotionSourcePage,
+} from "@/lib/devotion-source-store";
 import type {
   Annotation,
   ChapterData,
@@ -41,6 +50,7 @@ import type {
   DevotionImportDraft,
   DevotionImportMethod,
   DevotionImportUi,
+  DevotionSourceView,
   DevotionStore,
   EnglishSourceId,
   HighlightAnnotation,
@@ -76,7 +86,19 @@ const EMPTY_DEVOTION_IMPORT: DevotionImportUi = {
   error: null,
   draft: null,
   replacePending: false,
+  source: null,
+  removedBlocks: [],
 };
+
+/** Big enough that a reader can zoom in and settle an argument with the OCR
+ * about a single printed word, small enough that a month of them is a few
+ * megabytes rather than a few hundred. */
+const SOURCE_PAGE_EDGE = 1_500;
+
+/* Module scope so the panel gets one stable identity for the life of the app
+   instead of a fresh closure on every parent render. */
+const canOpenDevotionReference = (reference: string): boolean =>
+  scripture.parseReference(devotionReferenceQuery(reference)) !== null;
 /* Leave the reader the majority of the window no matter how wide the screen
    is \u2014 the panel is a companion to the text, not a peer. */
 const panelWidthMax = (): number => Math.min(720, Math.round(window.innerWidth * 0.55));
@@ -155,6 +177,10 @@ interface State {
   devotionMode: "write" | "preview";
   devotionSaveState: string;
   devotionImport: DevotionImportUi;
+  /* Dates whose photographed page is still in IndexedDB. Kept as a set in
+     state so the panel can offer "Original" synchronously instead of showing
+     a control that may turn out to open nothing. */
+  devotionSourceDates: Set<string>;
   sourceId: EnglishSourceId;
   keyField: boolean;
   keyDraft: string;
@@ -239,6 +265,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     devotionMode: "write",
     devotionSaveState: "",
     devotionImport: EMPTY_DEVOTION_IMPORT,
+    devotionSourceDates: new Set<string>(),
     sourceId: "web",
     keyField: false,
     keyDraft: "",
@@ -283,7 +310,9 @@ export class ParallelBible extends Component<Record<string, never>, State> {
   private devotionSaveTimer?: ReturnType<typeof setTimeout>;
   private clearDevotionSave?: ReturnType<typeof setTimeout>;
   private pendingDevotionUndo: DevotionEntry | null = null;
+  private pendingDevotionSourceUndo: DevotionSourcePage | null = null;
   private devotionImportToken?: symbol;
+  private devotionSourceBlob: { blob: Blob; width: number; height: number } | null = null;
   private readonly searchResponses = new Map<
     string,
     SearchResult[]
@@ -308,6 +337,10 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       sourceId: scripture.englishSourceId(),
     });
     this.applyCssVariables();
+
+    void listDevotionSourceDates()
+      .then((dates) => this.setState({ devotionSourceDates: new Set(dates) }))
+      .catch(() => undefined);
 
     void scripture.ready().then(() => {
       const preferences = this.readJson<Partial<Preferences>>(STORAGE.preferences);
@@ -1364,7 +1397,11 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       sidePanelView: view,
       menu: null,
       activeId: view === "notes" ? activeId : state.activeId,
-      devotionCalendarOpen: view === "devotion" ? true : state.devotionCalendarOpen,
+      /* Opening onto a day that already has a page should show the page. The
+         picker only leads when there is nothing else to read. */
+      devotionCalendarOpen: view === "devotion"
+        ? !hasContent(state.devotions[state.devotionDate])
+        : state.devotionCalendarOpen,
       devotionMonth: view === "devotion" ? monthKey(state.devotionDate) : state.devotionMonth,
     }), () => {
       if (view === "search") {
@@ -1438,9 +1475,41 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     else this.openSidePanel("devotion");
   };
 
+  /** The panel holds one photo at a time. Revoking on every replacement keeps
+   * a long session of retries from leaking a decoded bitmap per attempt.
+   *
+   * Dropping the URL from state and revoking it are one operation, in that
+   * order: revoking first leaves a mounted <img> pointing at a dead URL, and
+   * the browser re-requests it before React gets to unmount it — a failure in
+   * the console for a photo nobody is waiting on any more. The revoke rides
+   * the commit callback so it lands after that element is gone. */
+  private releaseDevotionSource(): void {
+    const url = this.state.devotionImport.source?.url;
+    this.devotionSourceBlob = null;
+    if (!url) return;
+    this.setState(
+      (state) => ({ devotionImport: { ...state.devotionImport, source: null } }),
+      () => URL.revokeObjectURL(url),
+    );
+  }
+
+  /** Takes ownership of a page image: the blob is kept so a later save can
+   * persist it, and a URL is minted for the panel to display. Paired with
+   * {@link releaseDevotionSource}, which is what revokes that URL. */
+  private adoptDevotionSource(page: { blob: Blob; width: number; height: number }): void {
+    this.devotionSourceBlob = page;
+    this.setState((state) => ({
+      devotionImport: {
+        ...state.devotionImport,
+        source: { url: URL.createObjectURL(page.blob), width: page.width, height: page.height },
+      },
+    }));
+  }
+
   private startDevotionPhoto = (photo: File, method: DevotionImportMethod): void => {
     const problem = photoValidationError(photo);
     if (problem) {
+      this.releaseDevotionSource();
       this.setState({ devotionImport: { ...EMPTY_DEVOTION_IMPORT, phase: "error", error: problem } });
       return;
     }
@@ -1450,6 +1519,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const abort = new AbortController();
     this.devotionImportToken = token;
     this.devotionImportAbort = abort;
+    this.releaseDevotionSource();
     this.setState({
       devotionCalendarOpen: false,
       devotionImport: {
@@ -1459,6 +1529,18 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         status: method === "cloud-vision" ? "Preparing vision import" : "Preparing private OCR",
       },
     });
+
+    /* Runs alongside recognition rather than before it: the reader should see
+       the page they handed over while it is being read, and a failure to make
+       the preview must never be a failure to import. */
+    void resizedPhoto(photo, SOURCE_PAGE_EDGE, 0.72)
+      .then(({ blob, width, height }) => {
+        const stillThisImport = this.devotionImportToken === token
+          || (!this.devotionImportToken && this.state.devotionImport.phase === "review");
+        if (!stillThisImport || this.state.devotionImport.source) return;
+        this.adoptDevotionSource({ blob, width, height });
+      })
+      .catch(() => undefined);
 
     const onProgress = ({ progress, status }: { progress: number; status: string }) => {
       if (this.devotionImportToken !== token) return;
@@ -1482,20 +1564,25 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       if (this.devotionImportToken !== token) return;
       this.devotionImportToken = undefined;
       this.devotionImportAbort = undefined;
-      this.setState({
+      /* Carries the photo across into review rather than resetting to the
+         empty shape — the whole point of the check is having the page to
+         check against. */
+      this.setState((state) => ({
         devotionImport: {
           ...EMPTY_DEVOTION_IMPORT,
           phase: "review",
           method: completedWith,
           draft,
+          source: state.devotionImport.source,
         },
-      });
+      }));
     }).catch((error: unknown) => {
       if (this.devotionImportToken !== token) return;
       this.devotionImportToken = undefined;
       this.devotionImportAbort = undefined;
       if (error instanceof DOMException && error.name === "AbortError") return;
       const message = error instanceof Error ? error.message : "This photo could not be read.";
+      this.releaseDevotionSource();
       this.setState({
         devotionImport: { ...EMPTY_DEVOTION_IMPORT, phase: "error", method, error: message },
       });
@@ -1506,6 +1593,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     this.devotionImportAbort?.abort();
     this.devotionImportAbort = undefined;
     this.devotionImportToken = undefined;
+    this.releaseDevotionSource();
     this.setState({ devotionImport: EMPTY_DEVOTION_IMPORT });
   };
 
@@ -1515,9 +1603,70 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     }));
   };
 
+  /** Lifting a block out of the draft keeps enough to put it back exactly
+   * where it was, so "Remove" is a reversible edit rather than a small
+   * irreversible loss of something the camera only saw once. */
+  private removeDevotionBlock = (sectionId: string, blockId: string): void => {
+    this.setState((state) => {
+      const draft = state.devotionImport.draft;
+      const section = draft?.template.sections.find((item) => item.id === sectionId);
+      const index = section?.blocks.findIndex((block) => block.id === blockId) ?? -1;
+      if (!draft || !section || index < 0) return null;
+      const block = section.blocks[index];
+      const answers = { ...draft.answers };
+      const answer = answers[blockId] || "";
+      delete answers[blockId];
+      return {
+        devotionImport: {
+          ...state.devotionImport,
+          replacePending: false,
+          removedBlocks: [...state.devotionImport.removedBlocks, { sectionId, index, block, answer }],
+          draft: {
+            ...draft,
+            answers,
+            template: {
+              ...draft.template,
+              sections: draft.template.sections.map((item) => item.id === sectionId
+                ? { ...item, blocks: item.blocks.filter((candidate) => candidate.id !== blockId) }
+                : item),
+            },
+          },
+        },
+      };
+    });
+  };
+
+  private restoreDevotionBlock = (blockId: string): void => {
+    this.setState((state) => {
+      const draft = state.devotionImport.draft;
+      const removed = state.devotionImport.removedBlocks.find((item) => item.block.id === blockId);
+      if (!draft || !removed) return null;
+      return {
+        devotionImport: {
+          ...state.devotionImport,
+          removedBlocks: state.devotionImport.removedBlocks.filter((item) => item.block.id !== blockId),
+          draft: {
+            ...draft,
+            answers: removed.answer ? { ...draft.answers, [blockId]: removed.answer } : draft.answers,
+            template: {
+              ...draft.template,
+              sections: draft.template.sections.map((section) => {
+                if (section.id !== removed.sectionId) return section;
+                const blocks = [...section.blocks];
+                blocks.splice(Math.min(removed.index, blocks.length), 0, removed.block);
+                return { ...section, blocks };
+              }),
+            },
+          },
+        },
+      };
+    });
+  };
+
   private editImportedDevotion = (): void => {
     const entry = this.devotionEntry(this.state.devotionDate);
     if (!entry?.template) return;
+    this.releaseDevotionSource();
     this.setState({
       devotionCalendarOpen: false,
       devotionImport: {
@@ -1530,6 +1679,14 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         },
       },
     });
+    /* The stored page comes back with the draft, so re-checking a layout weeks
+       later is the same job as checking it the day it was imported. */
+    void readDevotionSource(entry.date)
+      .then((page) => {
+        if (!page || this.state.devotionImport.phase !== "review") return;
+        this.adoptDevotionSource(page);
+      })
+      .catch(() => undefined);
   };
 
   private saveDevotionImport = (): void => {
@@ -1560,6 +1717,8 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       createdAt: now,
       updatedAt: now,
     };
+    const page = this.devotionSourceBlob;
+    this.releaseDevotionSource();
     this.setState((state) => {
       const devotions = { ...state.devotions, [entry.date]: entry };
       this.persistDevotions(devotions);
@@ -1570,9 +1729,42 @@ export class ParallelBible extends Component<Record<string, never>, State> {
         devotionCalendarOpen: false,
         devotionSaveState: "Imported",
         devotionImport: EMPTY_DEVOTION_IMPORT,
+        devotionSourceDates: page
+          ? new Set(state.devotionSourceDates).add(entry.date)
+          : state.devotionSourceDates,
       };
     });
+    /* Saving the page is best-effort by design. It is a convenience for
+       re-checking a transcription; the answers are the record, and they are
+       already committed above whatever storage decides to do here. */
+    if (page) {
+      void writeDevotionSource({ date: entry.date, savedAt: now, ...page }).catch(() => {
+        this.setState((state) => {
+          const dates = new Set(state.devotionSourceDates);
+          dates.delete(entry.date);
+          return { devotionSourceDates: dates };
+        });
+      });
+    }
   }
+
+  /** Opens the passage a printed reference names. A devotion page is a list of
+   * places to read, and in a Bible app each of those should be one tap from
+   * the text rather than something to retype into search. */
+  private openDevotionReference = (reference: string): void => {
+    const parsed = scripture.parseReference(devotionReferenceQuery(reference));
+    if (!parsed) return;
+    if (this.state.narrow) this.closeSidePanel();
+    void this.openAt(parsed.bookId, parsed.chapter, { verse: parsed.verse });
+  };
+
+  /** Hands the panel an object URL for the kept page. Ownership passes to the
+   * caller, which revokes it when the day changes. */
+  private loadDevotionSource = async (dateKey: string): Promise<DevotionSourceView | null> => {
+    const page = await readDevotionSource(dateKey).catch(() => null);
+    if (!page) return null;
+    return { url: URL.createObjectURL(page.blob), width: page.width, height: page.height };
+  };
 
   private devotionEntry(dateKey: string): DevotionEntry | undefined {
     return this.state.devotions[dateKey];
@@ -1622,32 +1814,53 @@ export class ParallelBible extends Component<Record<string, never>, State> {
     const entry = this.state.devotions[devotionDate];
     if (!entry) return;
     this.pendingDevotionUndo = entry;
+    this.pendingDevotionSourceUndo = null;
+    /* Held in memory, not deleted, until the undo window closes — an undo that
+       brought back the page but not its photo would be a partial restore. */
+    void readDevotionSource(devotionDate)
+      .then((page) => {
+        if (this.pendingDevotionUndo?.date !== devotionDate) return;
+        this.pendingDevotionSourceUndo = page;
+        return page ? deleteDevotionSource(devotionDate) : undefined;
+      })
+      .catch(() => undefined);
     this.setState((state) => {
       const devotions = { ...state.devotions };
       delete devotions[devotionDate];
       this.persistDevotions(devotions);
+      const devotionSourceDates = new Set(state.devotionSourceDates);
+      devotionSourceDates.delete(devotionDate);
       return {
         devotions,
+        devotionSourceDates,
         devotionSaveState: "",
         toast: { message: "Devotion cleared.", undo: true, kind: "devotion" as const },
       };
     });
     if (this.toastTimer) clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => this.setState({ toast: null }), 7_000);
+    this.toastTimer = setTimeout(() => {
+      this.pendingDevotionSourceUndo = null;
+      this.setState({ toast: null });
+    }, 7_000);
   };
 
   private undoDevotionClear = (): void => {
     const entry = this.pendingDevotionUndo;
+    const page = this.pendingDevotionSourceUndo;
     if (this.toastTimer) clearTimeout(this.toastTimer);
     if (!entry) {
       this.setState({ toast: null });
       return;
     }
     this.pendingDevotionUndo = null;
+    this.pendingDevotionSourceUndo = null;
+    if (page) void writeDevotionSource(page).catch(() => undefined);
     this.setState((state) => {
       const devotions = { ...state.devotions, [entry.date]: entry };
       this.persistDevotions(devotions);
-      return { devotions, toast: null };
+      const devotionSourceDates = new Set(state.devotionSourceDates);
+      if (page) devotionSourceDates.add(entry.date);
+      return { devotions, devotionSourceDates, toast: null };
     });
   };
 
@@ -2562,6 +2775,7 @@ export class ParallelBible extends Component<Record<string, never>, State> {
       content = (
         <DevotionPanel
           calendarOpen={this.state.devotionCalendarOpen}
+          canOpenReference={canOpenDevotionReference}
           date={this.state.devotionDate}
           entry={this.devotionEntry(this.state.devotionDate)}
           hasEntry={(dateKey) => hasContent(this.state.devotions[dateKey])}
@@ -2574,14 +2788,19 @@ export class ParallelBible extends Component<Record<string, never>, State> {
           onClear={this.clearDevotionEntry}
           onConfirmReplace={this.confirmDevotionReplace}
           onEditImported={this.editImportedDevotion}
+          onLoadSource={this.loadDevotionSource}
           onModeChange={(devotionMode) => this.setState({ devotionMode })}
+          onOpenReference={this.openDevotionReference}
           onPhotoSelected={this.startDevotionPhoto}
           onPickDate={this.pickDevotionDate}
+          onRemoveBlock={this.removeDevotionBlock}
+          onRestoreBlock={this.restoreDevotionBlock}
           onSaveImport={this.saveDevotionImport}
           onStepMonth={this.stepDevotionMonth}
           onToggleCalendar={this.toggleDevotionCalendar}
           onUpdateImportDraft={this.updateDevotionImport}
           saveState={this.state.devotionSaveState}
+          sourceAvailable={this.state.devotionSourceDates.has(this.state.devotionDate)}
         />
       );
     }

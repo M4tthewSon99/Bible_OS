@@ -15,6 +15,23 @@ export function blockForDevotionDisplay(block: DevotionTemplateBlock): DevotionT
   return block;
 }
 
+/**
+ * Normalizes a reference as it is printed on a handout into something the
+ * scripture parser accepts. A printed reference carries things a parser does
+ * not want — a translation note, an en dash, a verse range — and a range
+ * resolves to its first verse because that is where a reader starting the
+ * passage wants to land.
+ */
+export function devotionReferenceQuery(reference: string): string {
+  return reference
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[‒-―]/g, "-")
+    .replace(/\s*-\s*\d+\s*$/, "")
+    .replace(/[.,;:]+\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function isOption(section: DevotionTemplateSection, number: number): boolean {
   return new RegExp(`^Option\\s+${number}\\s*:`, "i").test(section.title.trim());
 }
