@@ -15,6 +15,7 @@ import {
   motion,
   MotionConfig,
   type PanInfo,
+  type Transition,
   useDragControls,
 } from "motion/react";
 
@@ -32,6 +33,18 @@ const GESTURE_SPRING = {
   mass: 1,
 };
 
+/* Dismissal reads as faster than presentation: same critically-damped shape as
+   SURFACE_SPRING (ratio 1.01) but a ~0.28s response instead of ~0.35s, so the
+   return path mirrors the entrance curve without making the user wait on a
+   surface they have already decided to close. Still a spring, so a re-open
+   mid-dismiss is caught and reversed from the live value. */
+const DISMISS_SPRING = {
+  type: "spring" as const,
+  stiffness: 520,
+  damping: 46,
+  mass: 1,
+};
+
 type SurfaceEdge = "center" | "popover" | "right" | "bottom";
 
 interface FluidSurfaceProps {
@@ -42,12 +55,20 @@ interface FluidSurfaceProps {
   draggable?: boolean;
   edge?: SurfaceEdge;
   expandWidth?: number;
+  /* "glass" surfaces resolve their blur on entry so they read as a real
+     material arriving; "solid" ones must not, because blurring an opaque
+     card's own content only smears its type. */
+  material?: "glass" | "solid";
   onClick?: (event: ReactMouseEvent<HTMLDivElement>) => void;
   onDismiss?: () => void;
   onKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   role?: "complementary" | "dialog" | "menu";
   showHandle?: boolean;
   style?: CSSProperties;
+  /* Lets a caller drop the spring while a gesture is driving the surface
+     directly — a spring between the pointer and the edge it is dragging
+     reads as lag. Release it and the surface springs to rest again. */
+  transitionOverride?: Transition;
 }
 
 function projectedDistance(offset: number, velocity: number): number {
@@ -91,24 +112,30 @@ export const FluidSurface = forwardRef<HTMLDivElement, FluidSurfaceProps>(functi
     draggable = true,
     edge = "popover",
     expandWidth,
+    material = "glass",
     onClick,
     onDismiss,
     onKeyDown,
     role,
     showHandle = false,
     style,
+    transitionOverride,
   },
   ref,
 ) {
   const dragControls = useDragControls();
   const axis = draggable && edge === "right" ? "x" : draggable && edge === "bottom" ? "y" : false;
+  /* Only glass surfaces animate a filter. It is the one property here that is
+     not compositor-friendly — every radius change re-rasterizes the whole
+     subtree — so an opaque card pays that cost to smear its own text. */
+  const materialize = material === "glass";
   const initial = edge === "right"
     ? { opacity: 0.72, x: "100%", scale: 0.985 }
     : edge === "bottom"
       ? { opacity: 0.72, y: "100%", scale: 0.99 }
       : edge === "center"
-        ? { opacity: 0, y: 0, scale: 1, filter: "blur(0px)" }
-        : { opacity: 0, y: -7, scale: 0.96, filter: "blur(8px)" };
+        ? { opacity: 0, y: 0, scale: 1, ...(materialize && { filter: "blur(0px)" }) }
+        : { opacity: 0, y: -7, scale: 0.96, ...(materialize && { filter: "blur(8px)" }) };
   const collapsed = expandWidth ? { ...initial, width: 0 } : initial;
 
   const finishDrag = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
@@ -128,7 +155,7 @@ export const FluidSurface = forwardRef<HTMLDivElement, FluidSurfaceProps>(functi
         x: 0,
         y: 0,
         scale: 1,
-        filter: "blur(0px)",
+        ...(materialize && { filter: "blur(0px)" }),
         width: expandWidth,
       }}
       aria-label={ariaLabel}
@@ -145,15 +172,18 @@ export const FluidSurface = forwardRef<HTMLDivElement, FluidSurfaceProps>(functi
           : false}
       dragListener={false}
       dragMomentum={false}
-      exit={collapsed}
+      /* Drag-dismissed sheets keep the gesture spring so the surface leaves at
+         the velocity the finger let go of; everything else gets the quicker
+         dismissal. */
+      exit={axis ? collapsed : { ...collapsed, transition: DISMISS_SPRING }}
       initial={collapsed}
       onClick={onClick}
       onDragEnd={finishDrag}
       onKeyDown={onKeyDown}
       ref={ref}
       role={role}
-      style={style}
-      transition={axis ? GESTURE_SPRING : SURFACE_SPRING}
+      style={{ willChange: "transform, opacity", ...style }}
+      transition={transitionOverride ?? (axis ? GESTURE_SPRING : SURFACE_SPRING)}
     >
       {showHandle && axis && (
         <div
@@ -173,9 +203,10 @@ interface FluidBackdropProps {
   children: ReactNode;
   className: string;
   onDismiss: () => void;
+  style?: CSSProperties;
 }
 
-export function FluidBackdrop({ children, className, onDismiss }: FluidBackdropProps) {
+export function FluidBackdrop({ children, className, onDismiss, style }: FluidBackdropProps) {
   return (
     <motion.div
       animate={{ opacity: 1 }}
@@ -183,6 +214,7 @@ export function FluidBackdrop({ children, className, onDismiss }: FluidBackdropP
       exit={{ opacity: 0 }}
       initial={{ opacity: 0 }}
       onClick={onDismiss}
+      style={style}
       transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
     >
       {children}
